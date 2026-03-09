@@ -2,6 +2,8 @@
 
 **Active-recall training for ML, Pandas & Python — 10 topics, code editor, hint/solution panel.**
 
+![App interface](docs/screen_interface.png)
+
 * Created by **[Yunhua Zhu](https://www.linkedin.com/in/zhu-yunhua/)**
   * GitHub: https://github.com/zhuy16
 * Free software: MIT License
