@@ -643,6 +643,7 @@ _defaults = {
     "user_code":     {},   # q_id → str  (persists per question)
     "run_output":    "",
     "run_error":     "",
+    "run_figures":   [],
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -670,21 +671,28 @@ def _go_next():
     st.session_state.show_solution = False
     st.session_state.run_output    = ""
     st.session_state.run_error     = ""
+    st.session_state.run_figures   = []
     st.session_state.timer_start   = time.time()
 
 
 def _run_code(code: str):
-    """Execute user code, capture stdout + exceptions."""
-    import io, contextlib, traceback
+    """Execute user code, capture stdout + matplotlib figures."""
+    import io, contextlib, traceback, matplotlib
+    import matplotlib.pyplot as plt
+    matplotlib.use("Agg")          # non-interactive backend, safe for Streamlit
+    plt.close("all")               # clear any leftover figures
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
             exec(compile(code, "<editor>", "exec"), {})  # isolated namespace
-        st.session_state.run_output = buf.getvalue() or "(no output)"
-        st.session_state.run_error  = ""
+        st.session_state.run_output  = buf.getvalue() or ""
+        st.session_state.run_error   = ""
+        # Grab every figure matplotlib created during exec
+        st.session_state.run_figures = [plt.figure(n) for n in plt.get_fignums()]
     except Exception:
-        st.session_state.run_output = buf.getvalue()
-        st.session_state.run_error  = traceback.format_exc()
+        st.session_state.run_output  = buf.getvalue()
+        st.session_state.run_error   = traceback.format_exc()
+        st.session_state.run_figures = []
 
 
 def _elapsed() -> str:
@@ -756,6 +764,7 @@ with left:
         st.session_state.show_solution = False
         st.session_state.run_output    = ""
         st.session_state.run_error     = ""
+        st.session_state.run_figures   = []
         st.session_state.timer_start   = time.time()
         st.rerun()
 
@@ -795,20 +804,24 @@ with center:
     with rc2:
         if st.button("🗑️ Clear Editor", use_container_width=True):
             st.session_state.user_code[q["id"]] = _default_code
-            st.session_state.run_output = ""
-            st.session_state.run_error  = ""
+            st.session_state.run_output  = ""
+            st.session_state.run_error   = ""
+            st.session_state.run_figures = []
             st.rerun()
 
     if st.session_state.run_error:
         st.error("**Runtime error:**")
         st.code(st.session_state.run_error, language="python")
-    elif st.session_state.run_output:
-        st.success("**Output:**")
-        st.code(st.session_state.run_output, language="")
+    else:
+        if st.session_state.run_output:
+            st.success("**Output:**")
+            st.code(st.session_state.run_output, language="")
+        for fig in st.session_state.run_figures:
+            st.pyplot(fig)
 
     st.caption(
-        "💡 Tip: plots won't render here — use VS Code / Jupyter for visuals. "
-        "Anything printed with `print()` will appear above."
+        "💡 `print()` output appears above · matplotlib plots render inline · "
+        "use Jupyter for interactive plots"
     )
 
     # Miss tracker
@@ -845,6 +858,7 @@ with center:
                     st.session_state.show_solution = False
                     st.session_state.run_output    = ""
                     st.session_state.run_error     = ""
+                    st.session_state.run_figures   = []
                     st.session_state.timer_start   = time.time()
                     st.rerun()
 
