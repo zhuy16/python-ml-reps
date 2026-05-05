@@ -1,6 +1,10 @@
-import streamlit as st
+import difflib
 import random
+import re
 import time
+
+import streamlit as st
+import streamlit.components.v1 as components
 from streamlit_ace import st_ace
 
 st.set_page_config(
@@ -8,6 +12,12 @@ st.set_page_config(
     layout="wide",
     page_icon="🧠",
 )
+
+st.markdown("""
+<style>
+.block-container { padding-top: 0.6rem !important; padding-bottom: 0rem !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # QUESTION BANK  (10 topics)
@@ -2365,6 +2375,8 @@ _defaults = {
     "hard_only":     False,
     "timer_start":   time.time(),
     "user_code":     {},   # q_id → str  (persists per question)
+    "editor_mode":   {},   # q_id → "mine" | "solution"
+    "notes":         {},   # q_id → str  (personal notes per question)
     "run_output":    "",
     "run_error":     "",
     "run_figures":   [],
@@ -2395,15 +2407,31 @@ def _current() -> dict:
 
 
 def _go_next():
-    pool = _pool()
+    pool   = _pool()
     others = [qid for qid in pool if qid != st.session_state.current_q_id]
-    st.session_state.current_q_id = random.choice(others) if others else st.session_state.current_q_id
+    if others:
+        def _w(qid):
+            d = st.session_state.difficulties.get(qid)
+            if d == "easy":
+                return 1
+            if d == "hard":
+                return 4 + st.session_state.miss_counts.get(qid, 0)
+            return 2  # unrated: medium priority
+        st.session_state.current_q_id = random.choices(
+            others, weights=[_w(i) for i in others], k=1
+        )[0]
     st.session_state.show_hint     = False
     st.session_state.show_solution = False
     st.session_state.run_output    = ""
     st.session_state.run_error     = ""
     st.session_state.run_figures   = []
     st.session_state.timer_start   = time.time()
+
+
+def _extract_solution_code(solution: str) -> str:
+    """Strip markdown fences from a solution string, return bare Python."""
+    m = re.search(r"```python\n(.*?)```", solution, re.DOTALL)
+    return m.group(1).rstrip() if m else solution.strip()
 
 
 def _run_code(code: str):
@@ -2435,54 +2463,62 @@ def _elapsed() -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # HEADER
 # ──────────────────────────────────────────────────────────────────────────────
-hc1, hc2, hc3, hc4 = st.columns([4, 1, 1, 1])
+_aq_h   = _active_questions()
+_total  = len(_aq_h)
+_easy_n = sum(1 for tq in _aq_h if st.session_state.difficulties.get(tq["id"]) == "easy")
+_hard_n = sum(1 for tq in _aq_h if st.session_state.difficulties.get(tq["id"]) == "hard")
+_done_n = sum(1 for tq in _aq_h if tq["id"] in st.session_state.difficulties)
+
+_pct = _easy_n / _total if _total else 0.0
+_prog_text = (
+    f"🎯 {_easy_n}/{_total} mastered ({_pct:.0%})"
+    + (" · 🏆 Bucket complete!" if _easy_n == _total else f" · {_hard_n} to drill")
+)
+
+hc1, hc2, hc3, hc4, hc5 = st.columns([3, 1, 1, 1, 4])
 with hc1:
-    st.title("🧠 Python ML Reps")
-    st.caption("Active-recall training · ML, Pandas, Python + Bioinformatics")
+    st.markdown("**🧠 Python ML Reps**")
 with hc2:
-    easy_n = sum(1 for tq in _active_questions() if st.session_state.difficulties.get(tq["id"]) == "easy")
-    st.metric("✅ Easy", easy_n)
+    st.markdown(f"✅ **{_easy_n}**&nbsp;Easy")
 with hc3:
-    hard_n = sum(1 for tq in _active_questions() if st.session_state.difficulties.get(tq["id"]) == "hard")
-    st.metric("🔴 Hard", hard_n)
+    st.markdown(f"🔴 **{_hard_n}**&nbsp;Hard")
 with hc4:
-    done_n = sum(1 for tq in _active_questions() if tq["id"] in st.session_state.difficulties)
-    st.metric("📝 Tagged", f"{done_n}/{len(_active_questions())}")
+    st.markdown(f"📝 **{_done_n}/{_total}**")
+with hc5:
+    st.progress(_pct, text=_prog_text)
 
 st.divider()
 
 # Bucket selector
-_bc1, _ = st.columns([3, 7])
-with _bc1:
-    _bucket_choice = st.radio(
-        "Bucket",
-        options=["Basic", "Bioinformatics Engineer", "Clinical"],
-        format_func=lambda b: {
-            "Basic":    "🔵 Basic (ML / Python)",
-            "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
-            "Clinical": "🏥 Clinical DS",
-        }[b],
-        horizontal=True,
-        index=["Basic", "Bioinformatics Engineer", "Clinical"].index(st.session_state.active_bucket),
-        label_visibility="collapsed",
-    )
-    if _bucket_choice != st.session_state.active_bucket:
-        st.session_state.active_bucket = _bucket_choice
-        st.session_state.current_q_id  = _active_questions()[0]["id"]
-        st.session_state.show_hint     = False
-        st.session_state.show_solution = False
-        st.session_state.run_output    = ""
-        st.session_state.run_error     = ""
-        st.session_state.run_figures   = []
-        st.session_state.timer_start   = time.time()
-        st.rerun()
+_bucket_choice = st.radio(
+    "Bucket",
+    options=["Basic", "Bioinformatics Engineer", "Clinical"],
+    format_func=lambda b: {
+        "Basic":    "🔵 Basic (ML / Python)",
+        "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
+        "Clinical": "🏥 Clinical DS",
+    }[b],
+    horizontal=True,
+    index=["Basic", "Bioinformatics Engineer", "Clinical"].index(st.session_state.active_bucket),
+    label_visibility="collapsed",
+)
+if _bucket_choice != st.session_state.active_bucket:
+    st.session_state.active_bucket = _bucket_choice
+    st.session_state.current_q_id  = _active_questions()[0]["id"]
+    st.session_state.show_hint     = False
+    st.session_state.show_solution = False
+    st.session_state.run_output    = ""
+    st.session_state.run_error     = ""
+    st.session_state.run_figures   = []
+    st.session_state.timer_start   = time.time()
+    st.rerun()
 
 q = _current()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN LAYOUT  ·  LEFT · CENTER · RIGHT
 # ──────────────────────────────────────────────────────────────────────────────
-left, center, right = st.columns([2, 3, 2])
+left, center, right = st.columns([2, 5, 1.5])
 
 # ── LEFT: question prompt ─────────────────────────────────────────────────────
 with left:
@@ -2495,52 +2531,127 @@ with left:
     st.markdown(q["prompt"])
 
     st.divider()
-
-    if st.button("🎲 Next Random", use_container_width=True, type="primary"):
-        _go_next()
-        st.rerun()
-
-    st.divider()
-    st.markdown("**📌 Jump to a topic:**")
-    _aq = _active_questions()
-    topic_labels = [
-        f"{CATEGORY_ICON.get(tq['category'], '⚪')} {tq['title']}"
-        + ({"easy": " ✅", "hard": " 🔴"}.get(st.session_state.difficulties.get(tq["id"]), ""))
-        for tq in _aq
-    ]
-    current_idx = next(i for i, tq in enumerate(_aq) if tq["id"] == q["id"])
-    chosen_idx = st.selectbox(
-        label="Select question",
-        options=range(len(_aq)),
-        format_func=lambda i: topic_labels[i],
-        index=current_idx,
-        label_visibility="collapsed",
-    )
-    if chosen_idx != current_idx:
-        st.session_state.current_q_id  = _aq[chosen_idx]["id"]
-        st.session_state.show_hint     = False
-        st.session_state.show_solution = False
-        st.session_state.run_output    = ""
-        st.session_state.run_error     = ""
-        st.session_state.run_figures   = []
-        st.session_state.timer_start   = time.time()
-        st.rerun()
+    st.markdown("<small>🗂️ <b>Topics</b></small>", unsafe_allow_html=True)
+    grid = st.columns(3)
+    for i, tq in enumerate(_active_questions()):
+        icon  = CATEGORY_ICON.get(tq["category"], "⚪")
+        badge = {"easy": "✅", "hard": "🔴"}.get(
+            st.session_state.difficulties.get(tq["id"]), ""
+        )
+        is_current = tq["id"] == q["id"]
+        short_title = tq["title"].split("—")[0].split("(")[0].strip()
+        label = f"{icon} {short_title} {badge}{'▶' if is_current else ''}"
+        btn_type = "primary" if is_current else "secondary"
+        with grid[i % 3]:
+            if st.button(label, key=f"nav_{tq['id']}", use_container_width=True, type=btn_type):
+                if not is_current:
+                    st.session_state.current_q_id  = tq["id"]
+                    st.session_state.show_hint     = False
+                    st.session_state.show_solution = False
+                    st.session_state.run_output    = ""
+                    st.session_state.run_error     = ""
+                    st.session_state.run_figures   = []
+                    st.session_state.timer_start   = time.time()
+                    st.rerun()
 
 # ── CENTER: workspace + tracker ───────────────────────────────────────────────
 with center:
-    st.markdown("### 💻 Your Workspace")
-    st.info(q["workspace_tip"])
-
     # ── Code editor ──────────────────────────────────────────────────────────
     _default_code = f"# {q['title']}\n# Write your solution here\n\n"
-    current_code = st.session_state.user_code.get(q["id"], _default_code)
+    _mode = st.session_state.editor_mode.get(q["id"], "mine")
+    _solution_code = _extract_solution_code(q["solution"])
 
-    st.markdown("**✏️ Code Editor**")
+    # Mode toggle
+    _tc1, _tc2, _spacer = st.columns([2, 2, 6])
+    with _tc1:
+        if st.button(
+            "📝 My Code",
+            type="primary" if _mode == "mine" else "secondary",
+            use_container_width=True,
+            help="Switch to your work-in-progress",
+        ):
+            st.session_state.editor_mode[q["id"]] = "mine"
+            st.rerun()
+    with _tc2:
+        if st.button(
+            "✅ Solution",
+            type="primary" if _mode == "solution" else "secondary",
+            use_container_width=True,
+            help="Load the full solution — your WIP is preserved",
+        ):
+            st.session_state.editor_mode[q["id"]] = "solution"
+            st.rerun()
+
+    # Ctrl+S / Cmd+S — toggle My Code ↔ Solution
+    # Must attach to EVERY iframe (Ace editor lives in its own iframe and
+    # swallows keydown events before they reach window.parent.document).
+    components.html("""
+    <script>
+    (function() {
+        var par = window.parent;
+
+        function clickToggle() {
+            var btns = par.document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+                var txt = (btns[i].innerText || btns[i].textContent || '').trim();
+                var tid = btns[i].getAttribute('data-testid') || '';
+                if ((txt.includes('My Code') || txt.includes('Solution')) &&
+                        tid === 'baseButton-secondary') {
+                    btns[i].click();
+                    return;
+                }
+            }
+        }
+
+        function onKey(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                clickToggle();
+            }
+        }
+
+        // Parent document — remove old listener then re-add fresh one
+        if (par._editorShortcut) {
+            par.document.removeEventListener('keydown', par._editorShortcut, true);
+        }
+        par._editorShortcut = onKey;
+        par.document.addEventListener('keydown', onKey, true);
+
+        // All iframes (Ace editor, other components) — attach once per doc
+        function attachToFrames() {
+            var frames = par.document.querySelectorAll('iframe');
+            for (var i = 0; i < frames.length; i++) {
+                try {
+                    var doc = frames[i].contentDocument;
+                    if (doc && !doc._shortcutBound) {
+                        doc._shortcutBound = true;
+                        doc.addEventListener('keydown', onKey, true);
+                    }
+                } catch(ex) {}
+            }
+        }
+
+        attachToFrames();
+        // Poll for newly mounted iframes (e.g. Ace editor remount after toggle)
+        if (par._shortcutPoll) clearInterval(par._shortcutPoll);
+        par._shortcutPoll = setInterval(attachToFrames, 800);
+    })();
+    </script>
+    """, height=0)
+
+    # Pick content based on mode; key change forces editor remount with correct value
+    current_code = (
+        _solution_code
+        if _mode == "solution"
+        else st.session_state.user_code.get(q["id"], _default_code)
+    )
+
     user_code = st_ace(
         value=current_code,
         language="python",
         theme="monokai",
-        key=f"editor_{q['id']}",
+        key=f"editor_{q['id']}_{_mode}",
         height=300,
         tab_size=4,
         font_size=14,
@@ -2549,9 +2660,10 @@ with center:
         wrap=False,
         auto_update=True,
     )
-    # Persist per question
+    # Persist WIP only in "mine" mode; solution view stays pristine
     if user_code is not None:
-        st.session_state.user_code[q["id"]] = user_code
+        if _mode == "mine":
+            st.session_state.user_code[q["id"]] = user_code
     else:
         user_code = current_code
 
@@ -2562,6 +2674,7 @@ with center:
     with rc2:
         if st.button("🗑️ Clear Editor", use_container_width=True):
             st.session_state.user_code[q["id"]] = _default_code
+            st.session_state.editor_mode[q["id"]] = "mine"
             st.session_state.run_output  = ""
             st.session_state.run_error   = ""
             st.session_state.run_figures = []
@@ -2582,6 +2695,43 @@ with center:
         "use Jupyter for interactive plots"
     )
 
+    # ── Code diff (always-on hint) ─────────────────────────────────────────
+    _wip_diff = st.session_state.user_code.get(q["id"], "").strip()
+    _, _dtoggle_col = st.columns([3, 2])
+    with _dtoggle_col:
+        _hide_diff = st.toggle(
+            "🧠 Hard mode (hide diff)",
+            value=st.session_state.get("diff_hard_mode", False),
+            key="diff_hard_mode_toggle",
+            help="Hard: diff collapsed — think before you peek",
+        )
+        st.session_state.diff_hard_mode = _hide_diff
+    with st.expander("🔍 Diff: My Code vs Solution", expanded=not _hide_diff):
+        if not _wip_diff:
+            st.info("✏️ Write some code above — diff will appear here automatically.")
+        else:
+            def _norm(text, strip_boilerplate=False):
+                """Strip trailing whitespace and collapse internal spaces per line."""
+                _boiler = {f"# {q['title']}", "# Write your solution here"}
+                lines = text.splitlines()
+                if strip_boilerplate:
+                    lines = [ln for ln in lines if ln.strip() not in _boiler]
+                    while lines and not lines[0].strip():
+                        lines.pop(0)
+                return [re.sub(r"  +", " ", ln.rstrip()) for ln in lines]
+            _diff_lines = list(difflib.unified_diff(
+                _norm(_wip_diff, strip_boilerplate=True),
+                _norm(_solution_code),
+                lineterm="",
+                fromfile="My Code",
+                tofile="Solution",
+                n=3,
+            ))
+            if _diff_lines:
+                st.code("\n".join(_diff_lines), language="diff")
+            else:
+                st.success("✅ Your code matches the solution!")
+
     # Miss tracker
     if st.session_state.miss_counts:
         st.divider()
@@ -2594,31 +2744,6 @@ with center:
             dots = "🔴" * min(cnt, 6)
             st.markdown(f"- **{name}** {dots} ×{cnt}")
 
-    # Topic overview with click-to-jump buttons (3-column grid)
-    st.divider()
-    st.markdown("**🗂️ Topics**")
-    grid = st.columns(3)
-    for i, tq in enumerate(_active_questions()):
-        icon  = CATEGORY_ICON.get(tq["category"], "⚪")
-        badge = {"easy": "✅", "hard": "🔴"}.get(
-            st.session_state.difficulties.get(tq["id"]), ""
-        )
-        is_current = tq["id"] == q["id"]
-        # Short label: just the icon + abbreviated title + badge
-        short_title = tq["title"].split("—")[0].split("(")[0].strip()
-        label = f"{icon} {short_title} {badge}{'▶' if is_current else ''}"
-        btn_type = "primary" if is_current else "secondary"
-        with grid[i % 3]:
-            if st.button(label, key=f"nav_{tq['id']}", use_container_width=True, type=btn_type):
-                if not is_current:
-                    st.session_state.current_q_id  = tq["id"]
-                    st.session_state.show_hint     = False
-                    st.session_state.show_solution = False
-                    st.session_state.run_output    = ""
-                    st.session_state.run_error     = ""
-                    st.session_state.run_figures   = []
-                    st.session_state.timer_start   = time.time()
-                    st.rerun()
 
 # ── RIGHT: reference panel ────────────────────────────────────────────────────
 with right:
@@ -2670,6 +2795,20 @@ with right:
 
     st.divider()
 
+    # Per-question notes
+    st.markdown("**📌 My Notes**")
+    _note = st.text_area(
+        "notes",
+        value=st.session_state.notes.get(q["id"], ""),
+        height=90,
+        placeholder="Key insight, what you missed, mnemonic to remember...",
+        key=f"note_{q['id']}",
+        label_visibility="collapsed",
+    )
+    st.session_state.notes[q["id"]] = _note
+
+    st.divider()
+
     # Hint toggle
     hint_label = "💡 Hide Hint" if st.session_state.show_hint else "💡 Show Hint"
     if st.button(hint_label, use_container_width=True):
@@ -2680,18 +2819,6 @@ with right:
     if st.session_state.show_hint:
         st.markdown("**💡 Hint:**")
         st.markdown(q["hint"])
-
-    st.divider()
-
-    # Solution toggle
-    sol_label = "🔍 Hide Solution" if st.session_state.show_solution else "🔍 Show Solution"
-    if st.button(sol_label, use_container_width=True):
-        st.session_state.show_solution = not st.session_state.show_solution
-        st.rerun()
-
-    if st.session_state.show_solution:
-        st.markdown("**🔍 Full Solution:**")
-        st.markdown(q["solution"])
 
     st.divider()
 

@@ -16,9 +16,11 @@ Speed in data science interviews and day-to-day work comes from **muscle memory*
 This app gives you:
 
 - **Active recall** — you see a prompt and have to produce the code from memory
-- **Randomness** — questions appear in random order so you can't rely on sequence
-- **Immediate feedback** — run your code inline, then compare against the hint and full solution
-- **Spaced repetition** — mark questions Easy ✅ or Hard 🔴, then drill hard-only mode to focus on weak spots
+- **Always-on diff** — a live `My Code vs Solution` diff below the editor shows exactly which lines you are still missing
+- **My Code ↔ Solution toggle** — flip between your WIP and the full solution with `Ctrl+S` (or the buttons); your code is never overwritten
+- **Spaced repetition** — Hard questions surface more often; Easy ones fade; miss counts boost priority automatically
+- **Per-question notes** — jot a mnemonic or key insight that persists in session for each question
+- **Progress bar** — see `X/N mastered` for the active bucket at a glance
 - **Miss tracking** — the app counts how many times you've marked each topic Hard so you can see your blind spots
 
 ---
@@ -91,17 +93,19 @@ Clinical data science: pandas from memory, scikit-learn end-to-end, and survival
 **App layout:**
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  🔵 Basic (ML / Python)  🧬 Bioinformatics Engineer  🏥 Clinical DS  │  ← bucket selector
-└──────────────────────────────────────────────────────────────────┘
-┌─────────────────┬──────────────────────────┬─────────────────────┐
-│  LEFT           │  CENTER                  │  RIGHT              │
-│  Task prompt    │  Ace code editor         │  💡 Show Hint       │
-│  Category badge │  ▶ Run Code (inline)     │  🔍 Show Solution   │
-│  ⏱️ Timer       │  Output + plots          │  ✅ Mark Easy       │
-│  🎲 Next Random │  📊 Miss tracker         │  🔴 Mark Hard       │
-│  📌 Jump to ... │  🗂️ Topic grid buttons   │  🔴 Hard-only mode  │
-└─────────────────┴──────────────────────────┴─────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  🧠 Python ML Reps  ✅ N Easy  � N Hard  📝 N/N  ░░░░ 🎯 X/N mastered (%)  │  ← header
+│  �🔵 Basic (ML/Python)  🧬 Bioinformatics Engineer  🏥 Clinical DS            │  ← bucket
+└──────────────────────────────────────────────────────────────────────────────┘
+┌───────────────────┬──────────────────────────────────────┬──────────────────┐
+│  LEFT             │  CENTER (dominant)                   │  RIGHT           │
+│  Task prompt      │  📝 My Code │ ✅ Solution  (Ctrl+S)  │  🔴 Hard Only    │
+│  Category + timer │  Ace code editor                     │  ✅/🔴 Rate      │
+│                   │  ▶ Run Code  🗑️ Clear                 │  � My Notes     │
+│  🗂️ Topic grid   │  Output + plots                      │  💡 Show Hint    │
+│                   │  🔍 Diff: My Code vs Solution        │  🗑️ Reset        │
+│                   │  📊 Miss tracker                     │                  │
+└───────────────────┴──────────────────────────────────────┴──────────────────┘
 ```
 
 ---
@@ -142,12 +146,15 @@ The app opens automatically at **http://localhost:8501**.
 
 1. **Read the prompt** on the left — understand what you need to implement
 2. **Write your solution** in the Ace editor (centre) — Tab inserts 4 spaces, syntax highlighting included
-3. **Click ▶ Run Code** — `print()` output and matplotlib plots render inline
-4. **Peek at 💡 Hint** on the right if you're stuck (shows key imports/approach)
-5. **Reveal 🔍 Solution** to compare your answer against the full working code
-6. **Rate it** — ✅ Easy if you nailed it, 🔴 Hard if you struggled
-7. **Click 🎲 Next Random** or pick a specific topic from the dropdown / grid buttons
-8. **Enable 🔴 Hard-Only mode** to drill only your weak spots
+3. **Watch the diff** — `🔍 Diff: My Code vs Solution` below the editor updates as you type; each green line you eliminate is one more line memorised
+4. **Click ▶ Run Code** — `print()` output and matplotlib plots render inline
+5. **Toggle `✅ Solution`** (or press `Ctrl+S` / `Cmd+S`) to load the full solution into the editor — your WIP is preserved
+6. **Toggle back `� My Code`** (or `Ctrl+S` again) to restore your work and compare
+7. **Peek at 💡 Hint** on the right if you're stuck
+8. **Rate it** — ✅ Easy if you nailed it, 🔴 Hard if you struggled
+9. **Add a 📌 note** — jot the key insight so you remember it next session
+10. **Navigate** via the `🗂️ Topics` grid at the bottom of the left panel
+11. **Enable 🔴 Hard-Only mode** to drill only your weak spots
 
 ---
 
