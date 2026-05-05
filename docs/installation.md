@@ -1,38 +1,52 @@
 # Installation
 
-## Stable release
+## Requirements
 
-To install PythonBoilerplate, run this command in your terminal:
+- Python 3.9+
+- The dependencies listed in `requirements.txt`:
 
-```sh
-uv add python-boilerplate
+```
+streamlit
+streamlit-ace
+scikit-learn
+pandas
+seaborn
+matplotlib
+numpy
+lifelines
 ```
 
-Or if you prefer to use `pip`:
+## Setup
 
-```sh
-pip install python-boilerplate
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/zhuy16/python-ml-reps.git
+cd python-ml-reps
 ```
 
-## From source
+### 2. Create a virtual environment
 
-The source files for PythonBoilerplate can be downloaded from the [Github repo](https://github.com/zhuy16/python_boilerplate).
-
-You can either clone the public repository:
-
-```sh
-git clone https://github.com/zhuy16/python_boilerplate
+```bash
+python3 -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
 ```
 
-Or download the [tarball](https://github.com/zhuy16/python_boilerplate/tarball/main):
+### 3. Install dependencies
 
-```sh
-curl -OJL https://github.com/zhuy16/python_boilerplate/tarball/main
+```bash
+pip install -r requirements.txt
 ```
 
-Once you have a copy of the source, you can install it with:
+### 4. Run the app
 
-```sh
-cd python_boilerplate
-uv sync
+```bash
+streamlit run apps/streamlit_app.py
 ```
+
+The app opens at **http://localhost:8501**.
+
+> To use a different port:
+> ```bash
+> streamlit run apps/streamlit_app.py --server.port 8502
+> ```

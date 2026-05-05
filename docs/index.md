@@ -1,9 +1,9 @@
-# PythonBoilerplate
+# 🧠 Python ML Reps — Docs
 
-Python Boilerplate contains all the boilerplate you need to
+Active-recall training for Python, ML, Pandas & Bioinformatics.
 
-## Getting started
+## Contents
 
-- [Installation](installation.md) - how to install PythonBoilerplate
-- [Usage](usage.md) - how to use PythonBoilerplate
-- [API Reference](api.md) - auto-generated API documentation
+- [Installation](installation.md) — set up the virtual environment and run the app
+- [Usage](usage.md) — how to use the practice app effectively
+- [Changelog](../CHANGELOG/v0.2.0.md) — what changed in each version

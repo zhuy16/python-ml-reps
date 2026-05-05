@@ -1,6 +1,6 @@
 # 🧠 Python ML Reps
 
-**Active-recall training for ML, Pandas & Python — 10 topics, code editor, hint/solution panel.**
+**Active-recall training for Python, ML, Pandas & Bioinformatics — 39 questions across 3 practice buckets, inline code editor, hint/solution panel.**
 
 ![App interface](docs/screen_interface.png)
 
@@ -25,24 +25,75 @@ This app gives you:
 
 ## What's inside
 
-10 practice topics across 3 categories:
+**39 questions** organised into three focused practice buckets.
+Switch buckets with the radio selector at the top of the app.
+
+### 🔵 Basic (10 questions)
+
+Core ML and Python muscle memory.
 
 | # | Topic | Category |
 |---|-------|----------|
-| 1 | K-Means Clustering | 🔵 ML/Statistics |
-| 2 | Logistic Regression | 🔵 ML/Statistics |
-| 3 | PCA — Dimensionality Reduction | 🔵 ML/Statistics |
-| 4 | Train/Test Split + Pipeline | 🔵 ML/Statistics |
-| 5 | Pandas GroupBy & Aggregation | 🟢 Pandas/EDA |
-| 6 | Merging Tables (SQL-style Joins) | 🟢 Pandas/EDA |
-| 7 | Handling Missing Values | 🟢 Pandas/EDA |
-| 8 | Plotting with Matplotlib & Seaborn | 🟢 Pandas/EDA |
-| 9 | Simple ML Metrics | 🔵 ML/Statistics |
-| 10 | Parsing Messy Files | 🟡 Python Basics |
+| 1 | K-Means Clustering | ML/Statistics |
+| 2 | Logistic Regression | ML/Statistics |
+| 3 | PCA — Dimensionality Reduction | ML/Statistics |
+| 4 | Train/Test Split + Pipeline | ML/Statistics |
+| 5 | Pandas GroupBy & Aggregation | Pandas/EDA |
+| 6 | Merging Tables (SQL-style Joins) | Pandas/EDA |
+| 7 | Handling Missing Values | Pandas/EDA |
+| 8 | Plotting with Matplotlib & Seaborn | Pandas/EDA |
+| 9 | Simple ML Metrics | ML/Statistics |
+| 10 | Parsing Messy Files | Python Basics |
+
+### 🧬 Bioinformatics Engineer (17 questions)
+
+Practical genomics coding — DNA manipulation, variant tables, genomic file formats, and data structures. Focused on real bioinformatics engineering tasks.
+
+| # | Topic | Category |
+|---|-------|----------|
+| 1 | Reverse Complement DNA | Strings |
+| 2 | Count k-mers | Strings |
+| 3 | Find Mutations (ref vs query) | Strings |
+| 4 | Parse FASTA Text | Strings |
+| 5 | Parse VCF Format | Strings |
+| 6 | Parse FASTQ Reads | Strings |
+| 7 | Count Variants by Gene | Hash Maps |
+| 8 | Group Records by Sample ID | Hash Maps |
+| 9 | Deduplicate Variant Records | Hash Maps |
+| 10 | Top N Frequent Items | Hash Maps |
+| 11 | Sort Variants by VAF | Lists/Sorting |
+| 12 | Filter Variants (depth, VAF, consequence) | Lists/Sorting |
+| 13 | Merge Genomic Intervals | Lists/Sorting |
+| 14 | BED Interval Operations | Lists/Sorting |
+| 15 | Pandas Variant Table Analysis | Pandas/EDA |
+| 16 | Two Sum | Algorithms |
+| 17 | Longest Substring Without Repeating | Algorithms |
+
+### 🏥 Clinical DS (12 questions)
+
+Clinical data science: pandas from memory, scikit-learn end-to-end, and survival analysis with `lifelines`.
+
+| # | Topic | Category |
+|---|-------|----------|
+| 1 | Clinical DataFrame EDA | Pandas/EDA |
+| 2 | GroupBy Clinical Outcomes | Pandas/EDA |
+| 3 | Merge Patient Tables | Pandas/EDA |
+| 4 | Derived Columns on Clinical Data | Pandas/EDA |
+| 5 | Logistic Regression: Fit → Predict → Report | ML/Statistics |
+| 6 | ROC Curve + AUC | ML/Statistics |
+| 7 | sklearn Pipeline | ML/Statistics |
+| 8 | Cross-Validation AUC | ML/Statistics |
+| 9 | Kaplan-Meier Curve (Basic) | Survival Analysis |
+| 10 | KM Curves by Treatment Arm | Survival Analysis |
+| 11 | Log-Rank Test | Survival Analysis |
+| 12 | Cox Proportional Hazards Model | Survival Analysis |
 
 **App layout:**
 
 ```
+┌──────────────────────────────────────────────────────────────────┐
+│  🔵 Basic (ML / Python)  🧬 Bioinformatics Engineer  🏥 Clinical DS  │  ← bucket selector
+└──────────────────────────────────────────────────────────────────┘
 ┌─────────────────┬──────────────────────────┬─────────────────────┐
 │  LEFT           │  CENTER                  │  RIGHT              │
 │  Task prompt    │  Ace code editor         │  💡 Show Hint       │
@@ -110,7 +161,10 @@ pandas
 seaborn
 matplotlib
 numpy
+lifelines
 ```
+
+`lifelines` is required for the Kaplan-Meier, log-rank test, and Cox PH questions in the Clinical DS bucket.
 
 ---
 
