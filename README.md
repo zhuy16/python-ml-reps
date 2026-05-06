@@ -1,6 +1,6 @@
 # 🧠 Python ML Reps
 
-**Active-recall training for Python, ML, Pandas & Bioinformatics — 39 questions across 3 practice buckets, inline code editor, hint/solution panel.**
+**Active-recall training for Python, ML, Pandas & Bioinformatics — 41 questions across 4 practice buckets, inline code editor, hint/solution panel.**
 
 ![App interface](docs/screen_interface.png)
 
@@ -18,6 +18,9 @@ This app gives you:
 - **Active recall** — you see a prompt and have to produce the code from memory
 - **Always-on diff** — a live `My Code vs Solution` diff below the editor shows exactly which lines you are still missing
 - **My Code ↔ Solution toggle** — flip between your WIP and the full solution with `Ctrl+S` (or the buttons); your code is never overwritten
+- **Fast execute flow** — run with `Ctrl+Enter`/`Cmd+Enter` or `Shift+Enter`; use dedicated `Run Solution` to verify reference code
+- **Persistent progress** — app autosaves your notes, code, ratings, and editor mode across restarts
+- **Promote tested code** — one-click `Use My Code as Solution` after a successful run
 - **Spaced repetition** — Hard questions surface more often; Easy ones fade; miss counts boost priority automatically
 - **Per-question notes** — jot a mnemonic or key insight that persists in session for each question
 - **Progress bar** — see `X/N mastered` for the active bucket at a glance
@@ -27,7 +30,7 @@ This app gives you:
 
 ## What's inside
 
-**39 questions** organised into three focused practice buckets.
+**41 questions** organised into four focused practice buckets.
 Switch buckets with the radio selector at the top of the app.
 
 ### 🔵 Basic (10 questions)
@@ -71,7 +74,7 @@ Practical genomics coding — DNA manipulation, variant tables, genomic file for
 | 16 | Two Sum | Algorithms |
 | 17 | Longest Substring Without Repeating | Algorithms |
 
-### 🏥 Clinical DS (12 questions)
+### 🏥 Clinical DS (13 questions)
 
 Clinical data science: pandas from memory, scikit-learn end-to-end, and survival analysis with `lifelines`.
 
@@ -89,6 +92,15 @@ Clinical data science: pandas from memory, scikit-learn end-to-end, and survival
 | 10 | KM Curves by Treatment Arm | Survival Analysis |
 | 11 | Log-Rank Test | Survival Analysis |
 | 12 | Cox Proportional Hazards Model | Survival Analysis |
+| 13 | Integrated Clinical Genomics Drill | Survival Analysis |
+
+### 🧩 Integrated (1 question)
+
+Large, realistic end-to-end drill to stitch parsing, preprocessing, EDA, merge operations, and plotting.
+
+| # | Topic | Category |
+|---|-------|----------|
+| 1 | Integrated VCF Pipeline: Parse → Clean → EDA → Merge → Plot | Integrated Drill |
 
 **App layout:**
 
@@ -148,13 +160,14 @@ The app opens automatically at **http://localhost:8501**.
 2. **Write your solution** in the Ace editor (centre) — Tab inserts 4 spaces, syntax highlighting included
 3. **Watch the diff** — `🔍 Diff: My Code vs Solution` below the editor updates as you type; each green line you eliminate is one more line memorised
 4. **Click ▶ Run Code** — `print()` output and matplotlib plots render inline
-5. **Toggle `✅ Solution`** (or press `Ctrl+S` / `Cmd+S`) to load the full solution into the editor — your WIP is preserved
-6. **Toggle back `� My Code`** (or `Ctrl+S` again) to restore your work and compare
-7. **Peek at 💡 Hint** on the right if you're stuck
-8. **Rate it** — ✅ Easy if you nailed it, 🔴 Hard if you struggled
-9. **Add a 📌 note** — jot the key insight so you remember it next session
-10. **Navigate** via the `🗂️ Topics` grid at the bottom of the left panel
-11. **Enable 🔴 Hard-Only mode** to drill only your weak spots
+5. **Use 🧪 Run Solution** to execute the solution directly for verification
+6. **Toggle `✅ Solution`** (or press `Ctrl+S` / `Cmd+S`) to load the full solution into the editor — your WIP is preserved
+7. **Toggle back `� My Code`** (or `Ctrl+S` again) to restore your work and compare
+8. **Peek at 💡 Hint** on the right if you're stuck
+9. **Rate it** — ✅ Easy if you nailed it, 🔴 Hard if you struggled
+10. **Add a 📌 note** — jot the key insight so you remember it next session
+11. **Navigate** via the `🗂️ Topics` grid at the bottom of the left panel
+12. **Enable 🔴 Hard-Only mode** to drill only your weak spots
 
 ---
 

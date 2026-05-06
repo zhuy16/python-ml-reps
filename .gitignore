@@ -52,3 +52,7 @@ site/
 # IDE files
 # .idea/
 # .vscode/
+
+# Local app/runtime artifacts
+.streamlit/
+*.bak

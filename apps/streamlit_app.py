@@ -1,7 +1,9 @@
 import difflib
+import json
 import random
 import re
 import time
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -16,6 +18,8 @@ st.set_page_config(
 st.markdown("""
 <style>
 .block-container { padding-top: 0.6rem !important; padding-bottom: 0rem !important; }
+[data-testid="baseButton-primary"][id*="nav_"],
+[data-testid="baseButton-secondary"][id*="nav_"] { font-size: 0.55rem !important; padding: 0.2rem 0.3rem !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -2347,9 +2351,467 @@ plt.tight_layout()
 plt.show()
 ```""",
     },
+    {
+        "id": "clinical_integrated_drill",
+        "title": "Integrated Clinical Genomics Drill",
+        "category": "Survival Analysis",
+        "bucket": "Clinical",
+        "prompt": """\
+**Task:** Complete one end-to-end interview drill without context switching.
+
+You must cover all steps in one script:
+
+1. **Clinical + VCF parsing**
+   - Build a clinical DataFrame (`patient_id`, `age`, `stage`, `treatment_arm`, `cancer_type`, `survival_time`, `event`)
+   - Parse VCF text into a variant DataFrame with `patient_id`, `gene`, `depth`, `af`, `pathogenic`
+2. **Pandas operations**
+   - Filter to LUAD and summarize mean survival by treatment arm
+   - Aggregate variant features to patient-level
+   - Merge clinical + variant features
+3. **Basic sklearn**
+   - Define binary target: event within 12 months
+   - Train/test split + `RandomForestClassifier`
+   - Report ROC-AUC
+4. **Survival analysis**
+   - KM curves by treatment arm
+   - Log-rank p-value for A vs B
+   - Cox PH with clinical + variant covariates; print hazard ratios and p-values
+""",
+        "workspace_tip": (
+            "Treat this as a 45-minute capstone. Parse first, aggregate second, "
+            "model third, survival last. Keep patient-level merge keys explicit and "
+            "avoid leakage by defining the binary target from survival outcomes only."
+        ),
+        "hint": """\
+```python
+# 1) parse VCF -> var_df
+# 2) var_df.groupby('patient_id').agg(...) -> patient variant features
+# 3) merged = clinical.merge(features, on='patient_id', how='left').fillna(0)
+# 4) y = ((merged['survival_time'] <= 12) & (merged['event'] == 1)).astype(int)
+# 5) RandomForest + roc_auc_score
+# 6) KaplanMeierFitter curves, logrank_test, CoxPHFitter
+```""",
+        "solution": """\
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split
+
+from lifelines import KaplanMeierFitter, CoxPHFitter
+from lifelines.statistics import logrank_test
+
+np.random.seed(42)
+
+# -----------------------------
+# 1) Build clinical table
+# -----------------------------
+n = 140
+patient_ids = [f"P{i:03d}" for i in range(1, n + 1)]
+
+stage = np.random.choice(["I", "II", "III", "IV"], size=n, p=[0.2, 0.3, 0.3, 0.2])
+treatment_arm = np.random.choice(["A", "B"], size=n)
+cancer_type = np.random.choice(["LUAD", "LUSC", "BRCA"], size=n, p=[0.5, 0.3, 0.2])
+age = np.random.randint(40, 82, size=n)
+
+stage_risk = pd.Series(stage).map({"I": 0.0, "II": 0.35, "III": 0.8, "IV": 1.2}).values
+treat_effect = np.where(treatment_arm == "B", -0.35, 0.0)
+linpred = 0.02 * (age - 60) + stage_risk + treat_effect
+hazard = np.exp(linpred)
+
+survival_time = np.random.exponential(scale=22 / hazard).clip(1, 60).round(1)
+event_prob = np.clip(0.40 + 0.22 * (hazard / np.percentile(hazard, 75)), 0.25, 0.9)
+event = np.random.binomial(1, event_prob)
+
+clinical = pd.DataFrame(
+    {
+        "patient_id": patient_ids,
+        "age": age,
+        "stage": stage,
+        "treatment_arm": treatment_arm,
+        "cancer_type": cancer_type,
+        "survival_time": survival_time,
+        "event": event,
+    }
+)
+
+# -----------------------------
+# 2) Generate + parse VCF text
+# -----------------------------
+genes = ["TP53", "EGFR", "KRAS", "ALK", "PIK3CA"]
+consequences = ["missense", "nonsense", "frameshift", "synonymous"]
+
+vcf_lines = [
+    "##fileformat=VCFv4.2",
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
 ]
 
-ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS
+for pid in patient_ids:
+    n_var = np.random.poisson(2)
+    for idx in range(n_var):
+        chrom = np.random.choice(["1", "7", "12", "17"])
+        pos = np.random.randint(10_000, 900_000)
+        ref, alt = np.random.choice(["A", "C", "G", "T"], 2, replace=False)
+        qual = np.random.randint(35, 99)
+        gene = np.random.choice(genes)
+        csq = np.random.choice(consequences)
+        pathogenic = int(gene in {"TP53", "EGFR", "KRAS"} and np.random.rand() < 0.45)
+        dp = np.random.randint(20, 260)
+        af = np.random.uniform(0.03, 0.85)
+        var_id = f"{pid}_v{idx + 1}"
+        info = f"GENE={gene};CSQ={csq};PATH={pathogenic}"
+        sample = f"0/1:{dp}:{af:.3f}"
+        vcf_lines.append(
+            f"{chrom}\t{pos}\t{var_id}\t{ref}\t{alt}\t{qual}\tPASS\t{info}\tGT:DP:AF\t{sample}"
+        )
+
+vcf_text = "\n".join(vcf_lines)
+
+records = []
+for line in vcf_text.splitlines():
+    if not line or line.startswith("#"):
+        continue
+    chrom, pos, vid, ref, alt, qual, filt, info, fmt, sample = line.split("\t")
+    info_map = dict(item.split("=", 1) for item in info.split(";"))
+    fmt_keys = fmt.split(":")
+    fmt_vals = sample.split(":")
+    sample_map = dict(zip(fmt_keys, fmt_vals))
+
+    records.append(
+        {
+            "patient_id": vid.split("_")[0],
+            "gene": info_map["GENE"],
+            "depth": int(sample_map["DP"]),
+            "af": float(sample_map["AF"]),
+            "pathogenic": int(info_map["PATH"]),
+        }
+    )
+
+var_df = pd.DataFrame(records)
+
+# -----------------------------
+# 3) Pandas filtering/grouping
+# -----------------------------
+luad = clinical[clinical["cancer_type"] == "LUAD"]
+print("LUAD mean survival by arm:")
+print(luad.groupby("treatment_arm")["survival_time"].mean().round(2))
+
+if var_df.empty:
+    variant_feats = pd.DataFrame(
+        {
+            "patient_id": clinical["patient_id"],
+            "variant_count": 0,
+            "pathogenic_variant_count": 0,
+            "mean_af": 0.0,
+            "max_af": 0.0,
+            "has_tp53": 0,
+            "has_egfr": 0,
+            "has_kras": 0,
+        }
+    )
+else:
+    variant_feats = var_df.groupby("patient_id").agg(
+        variant_count=("gene", "size"),
+        pathogenic_variant_count=("pathogenic", "sum"),
+        mean_af=("af", "mean"),
+        max_af=("af", "max"),
+        has_tp53=("gene", lambda s: int((s == "TP53").any())),
+        has_egfr=("gene", lambda s: int((s == "EGFR").any())),
+        has_kras=("gene", lambda s: int((s == "KRAS").any())),
+    ).reset_index()
+
+merged = clinical.merge(variant_feats, on="patient_id", how="left")
+fill_cols = [
+    "variant_count",
+    "pathogenic_variant_count",
+    "mean_af",
+    "max_af",
+    "has_tp53",
+    "has_egfr",
+    "has_kras",
+]
+merged[fill_cols] = merged[fill_cols].fillna(0)
+
+# -----------------------------
+# 4) Basic ML: RF + AUC
+# -----------------------------
+merged["event_12m"] = ((merged["survival_time"] <= 12) & (merged["event"] == 1)).astype(int)
+
+X = pd.get_dummies(
+    merged[
+        [
+            "age",
+            "variant_count",
+            "pathogenic_variant_count",
+            "mean_af",
+            "max_af",
+            "has_tp53",
+            "has_egfr",
+            "has_kras",
+            "stage",
+            "treatment_arm",
+            "cancer_type",
+        ]
+    ],
+    drop_first=True,
+)
+y = merged["event_12m"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+rf = RandomForestClassifier(n_estimators=250, random_state=42)
+rf.fit(X_train, y_train)
+auc = roc_auc_score(y_test, rf.predict_proba(X_test)[:, 1])
+print(f"\nRandomForest ROC-AUC (12m event): {auc:.3f}")
+
+# -----------------------------
+# 5) Survival: KM + log-rank
+# -----------------------------
+kmf = KaplanMeierFitter()
+fig, ax = plt.subplots(figsize=(7, 5))
+for arm, grp in merged.groupby("treatment_arm"):
+    kmf.fit(grp["survival_time"], event_observed=grp["event"], label=f"Arm {arm}")
+    kmf.plot_survival_function(ax=ax, ci_show=True)
+ax.set_title("Kaplan-Meier by Treatment Arm")
+ax.set_xlabel("Months")
+ax.set_ylabel("Survival probability")
+plt.tight_layout()
+plt.show()
+
+gA = merged[merged["treatment_arm"] == "A"]
+gB = merged[merged["treatment_arm"] == "B"]
+lr = logrank_test(
+    gA["survival_time"],
+    gB["survival_time"],
+    event_observed_A=gA["event"],
+    event_observed_B=gB["event"],
+)
+print(f"Log-rank A vs B p-value: {lr.p_value:.4f}")
+
+# -----------------------------
+# 6) Cox PH: adjusted effects
+# -----------------------------
+cox_df = pd.get_dummies(
+    merged[
+        [
+            "survival_time",
+            "event",
+            "age",
+            "pathogenic_variant_count",
+            "has_tp53",
+            "has_egfr",
+            "has_kras",
+            "stage",
+            "treatment_arm",
+        ]
+    ],
+    drop_first=True,
+)
+
+cph = CoxPHFitter()
+cph.fit(cox_df, duration_col="survival_time", event_col="event")
+
+summary = cph.summary[["coef", "exp(coef)", "p"]].round(4)
+print("\nCox PH summary (coef, HR, p):")
+print(summary)
+```
+""",
+    },
+]
+
+INTEGRATED_QUESTIONS = [
+    {
+        "id": "integrated_vcf_eda_pipeline",
+        "title": "Integrated VCF Pipeline: Parse → Clean → EDA → Merge → Plot",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+    **Task:** Build one realistic mini variant-analysis pipeline from a VCF file.
+
+You should include all steps below in a single script:
+
+    1. **Read / parse `data/sample.vcf` with line parsing** (skip `##` meta lines, keep header row)
+2. Build a tidy variant table with useful columns (e.g., `chrom`, `pos`, `gene`, `sample`, `dp`, `af`, `impact`)
+3. **Preprocess missing values** (drop or impute where reasonable)
+4. **EDA**: shape, dtypes, null counts, basic numeric summary
+5. **GroupBy summaries** (for example by `gene` and `sample`)
+6. **Merge tables** (e.g., with sample-level clinical metadata)
+7. Plot distributions using **both seaborn and matplotlib** (hist / box / count plots)
+
+Output should make it easy to reason about variant burden and quality.
+""",
+        "workspace_tip": (
+            "Interview-friendly pattern: loop through lines, split by tab, parse INFO with `split(';')` and `split('=', 1)`, "
+            "append dict rows, then `pd.DataFrame(rows)`. Convert `.` to NaN, coerce numeric columns, do simple "
+            "groupby summaries, then merge with sample metadata on `sample`."
+        ),
+        "hint": """\
+```python
+import numpy as np
+import pandas as pd
+
+# Parse with line-by-line logic (easy to explain)
+rows = []
+with open("data/sample.vcf", "r", encoding="utf-8") as f:
+    for raw_line in f:
+        line = raw_line.strip()
+        if not line or line.startswith("##"):
+            continue
+        if line.startswith("#CHROM"):
+            continue
+        c = line.split("\t")
+        info = {}
+        for item in c[7].split(";"):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                info[k] = v
+        rows.append({
+            "chrom": c[0], "pos": c[1], "qual": c[5], "filter": c[6], "sample": c[9],
+            "gene": info.get("GENE"), "dp": info.get("DP"), "af": info.get("AF"), "impact": info.get("IMPACT")
+        })
+
+df = pd.DataFrame(rows).replace(".", np.nan)
+df["dp"] = pd.to_numeric(df["dp"], errors="coerce")
+df["af"] = pd.to_numeric(df["af"], errors="coerce")
+```""",
+        "solution": """\
+```python
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# -------------------------------------------------
+# 2) Parse VCF file line-by-line into row dicts
+# -------------------------------------------------
+rows = []
+with open("data/sample.vcf", "r", encoding="utf-8") as f:
+    for raw_line in f:
+        line = raw_line.strip()
+        if not line or line.startswith("##"):
+            continue
+        if line.startswith("#CHROM"):
+            continue
+
+        c = line.split("\t")
+        info_map = {}
+        for item in c[7].split(";"):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                info_map[k] = v
+
+        rows.append({
+            "chrom": c[0],
+            "pos": c[1],
+            "qual": c[5],
+            "filter": c[6],
+            "sample": c[9],
+            "gene": info_map.get("GENE"),
+            "dp": info_map.get("DP"),
+            "af": info_map.get("AF"),
+            "impact": info_map.get("IMPACT"),
+        })
+
+df = pd.DataFrame(rows)
+
+# --------------------------------------------------
+# 3) Preprocess: missing values + type conversions
+# --------------------------------------------------
+df = df.replace(".", np.nan)
+df["pos"] = pd.to_numeric(df["pos"], errors="coerce")
+df["qual"] = pd.to_numeric(df["qual"], errors="coerce")
+df["dp"] = pd.to_numeric(df["dp"], errors="coerce")
+df["af"] = pd.to_numeric(df["af"], errors="coerce")
+
+# Keep PASS rows, fill dp with median, and drop rows missing af/qual
+df_clean = df[df["filter"] == "PASS"].copy()
+df_clean["dp"] = df_clean["dp"].fillna(df_clean["dp"].median())
+df_clean = df_clean.dropna(subset=["af", "qual"])
+
+# --------------------------------
+# 4) EDA: structure + quick checks
+# --------------------------------
+print("Raw shape:", df.shape)
+print("Clean shape:", df_clean.shape)
+print("\nDtypes:\n", df_clean[["chrom", "pos", "qual", "dp", "af", "gene", "sample", "impact"]].dtypes)
+print("\nNulls in clean table:\n", df_clean[["qual", "dp", "af", "gene", "sample"]].isna().sum())
+print("\nNumeric summary:\n", df_clean[["qual", "dp", "af"]].describe().round(3))
+
+# --------------------------------
+# 5) GroupBy summaries
+# --------------------------------
+gene_summary = df_clean.groupby("gene").agg(
+    n_variants=("gene", "size"),
+    mean_af=("af", "mean"),
+    median_dp=("dp", "median"),
+).sort_values(["n_variants", "mean_af"], ascending=[False, False]).round(3)
+
+sample_summary = df_clean.groupby("sample").agg(
+    n_variants=("sample", "size"),
+    mean_af=("af", "mean"),
+    mean_qual=("qual", "mean"),
+).sort_values("n_variants", ascending=False).round(3)
+
+print("\nBy gene:\n", gene_summary)
+print("\nBy sample:\n", sample_summary)
+
+# --------------------------------
+# 6) Merge with sample metadata
+# --------------------------------
+sample_meta = pd.DataFrame({
+    "sample": ["S01", "S02", "S03", "S04", "S05"],
+    "cohort": ["Lung", "Lung", "Breast", "Melanoma", "Breast"],
+    "age": [61, 67, np.nan, 58, 49],
+    "response": ["PR", "SD", "PD", "PR", "CR"],
+})
+
+merged = sample_summary.reset_index().merge(sample_meta, on="sample", how="left")
+merged["age"] = merged["age"].fillna(merged["age"].median())
+
+cohort_summary = merged.groupby("cohort").agg(
+    samples=("sample", "nunique"),
+    total_variants=("n_variants", "sum"),
+    mean_af=("mean_af", "mean"),
+).sort_values("total_variants", ascending=False).round(3)
+
+print("\nMerged sample-level table:\n", merged)
+print("\nCohort summary:\n", cohort_summary)
+
+# --------------------------------
+# 7) Plot distributions (sns + plt)
+# --------------------------------
+sns.set_theme(style="whitegrid")
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+# Seaborn histogram
+sns.histplot(df_clean["af"], bins=8, kde=True, ax=axes[0], color="#2C7FB8")
+axes[0].set_title("AF Distribution")
+axes[0].set_xlabel("Allele Frequency")
+
+# Seaborn boxplot
+sns.boxplot(data=df_clean, x="impact", y="dp", ax=axes[1], palette="Set2")
+axes[1].set_title("Depth by Impact")
+axes[1].set_xlabel("Impact")
+axes[1].set_ylabel("Depth (DP)")
+
+# Matplotlib bar plot (from value_counts)
+gene_counts = df_clean["gene"].value_counts()
+axes[2].bar(gene_counts.index, gene_counts.values, color="#7FC97F")
+axes[2].set_title("Variant Count by Gene")
+axes[2].tick_params(axis="x", rotation=45)
+
+plt.tight_layout()
+plt.show()
+```""",
+    }
+]
+
+ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS
 
 CATEGORY_ICON = {
     "ML/Statistics":    "🔵",
@@ -2360,6 +2822,7 @@ CATEGORY_ICON = {
     "Lists/Sorting":    "📋",
     "Algorithms":       "⚙️",
     "Survival Analysis": "📈",
+    "Integrated Drill": "🧩",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2377,6 +2840,9 @@ _defaults = {
     "user_code":     {},   # q_id → str  (persists per question)
     "editor_mode":   {},   # q_id → "mine" | "solution"
     "notes":         {},   # q_id → str  (personal notes per question)
+    "custom_solutions": {},  # q_id → str  (user-promoted tested solution)
+    "last_run_ok":   {},   # q_id → bool (last execution status)
+    "last_run_code": {},   # q_id → str  (code that was last executed)
     "run_output":    "",
     "run_error":     "",
     "run_figures":   [],
@@ -2384,6 +2850,44 @@ _defaults = {
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
         st.session_state[_k] = _v
+
+_PROGRESS_PATH = Path(__file__).resolve().parents[1] / ".streamlit" / "practice_progress.json"
+_PERSIST_KEYS = [
+    "user_code",
+    "notes",
+    "editor_mode",
+    "difficulties",
+    "miss_counts",
+    "custom_solutions",
+]
+
+
+def _load_progress_from_disk() -> dict:
+    if not _PROGRESS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(_PROGRESS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_progress_to_disk():
+    data = {k: st.session_state.get(k, {}) for k in _PERSIST_KEYS}
+    try:
+        _PROGRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _PROGRESS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+if not st.session_state.get("_progress_loaded", False):
+    _persisted = _load_progress_from_disk()
+    for _k in _PERSIST_KEYS:
+        _v = _persisted.get(_k)
+        if isinstance(st.session_state.get(_k), dict) and isinstance(_v, dict):
+            st.session_state[_k].update(_v)
+    st.session_state._progress_loaded = True
 
 # ──────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -2434,7 +2938,15 @@ def _extract_solution_code(solution: str) -> str:
     return m.group(1).rstrip() if m else solution.strip()
 
 
-def _run_code(code: str):
+def _is_valid_python(code: str) -> bool:
+    try:
+        compile(code, "<solution>", "exec")
+        return True
+    except Exception:
+        return False
+
+
+def _run_code(qid: str, code: str):
     """Execute user code, capture stdout + matplotlib figures."""
     import io, contextlib, traceback, matplotlib
     import matplotlib.pyplot as plt
@@ -2442,15 +2954,18 @@ def _run_code(code: str):
     plt.close("all")               # clear any leftover figures
     buf = io.StringIO()
     try:
+        st.session_state.last_run_code[qid] = code
         with contextlib.redirect_stdout(buf):
             exec(compile(code, "<editor>", "exec"), {})  # isolated namespace
         st.session_state.run_output  = buf.getvalue() or ""
         st.session_state.run_error   = ""
+        st.session_state.last_run_ok[qid] = True
         # Grab every figure matplotlib created during exec
         st.session_state.run_figures = [plt.figure(n) for n in plt.get_fignums()]
     except Exception:
         st.session_state.run_output  = buf.getvalue()
         st.session_state.run_error   = traceback.format_exc()
+        st.session_state.last_run_ok[qid] = False
         st.session_state.run_figures = []
 
 
@@ -2492,14 +3007,15 @@ st.divider()
 # Bucket selector
 _bucket_choice = st.radio(
     "Bucket",
-    options=["Basic", "Bioinformatics Engineer", "Clinical"],
+    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated"],
     format_func=lambda b: {
         "Basic":    "🔵 Basic (ML / Python)",
         "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
         "Clinical": "🏥 Clinical DS",
+        "Integrated": "🧩 Integrated Drills",
     }[b],
     horizontal=True,
-    index=["Basic", "Bioinformatics Engineer", "Clinical"].index(st.session_state.active_bucket),
+    index=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated"].index(st.session_state.active_bucket),
     label_visibility="collapsed",
 )
 if _bucket_choice != st.session_state.active_bucket:
@@ -2518,7 +3034,7 @@ q = _current()
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN LAYOUT  ·  LEFT · CENTER · RIGHT
 # ──────────────────────────────────────────────────────────────────────────────
-left, center, right = st.columns([2, 5, 1.5])
+left, center, right = st.columns([1.33, 4.9, 3.77])
 
 # ── LEFT: question prompt ─────────────────────────────────────────────────────
 with left:
@@ -2532,37 +3048,70 @@ with left:
 
     st.divider()
     st.markdown("<small>🗂️ <b>Topics</b></small>", unsafe_allow_html=True)
-    grid = st.columns(3)
-    for i, tq in enumerate(_active_questions()):
-        icon  = CATEGORY_ICON.get(tq["category"], "⚪")
-        badge = {"easy": "✅", "hard": "🔴"}.get(
-            st.session_state.difficulties.get(tq["id"]), ""
-        )
-        is_current = tq["id"] == q["id"]
+    _topics = _active_questions()
+    _topic_ids = [tq["id"] for tq in _topics]
+    _topic_index = _topic_ids.index(q["id"]) if q["id"] in _topic_ids else 0
+
+    def _topic_label(qid: str) -> str:
+        tq = next(t for t in _topics if t["id"] == qid)
         short_title = tq["title"].split("—")[0].split("(")[0].strip()
-        label = f"{icon} {short_title} {badge}{'▶' if is_current else ''}"
-        btn_type = "primary" if is_current else "secondary"
-        with grid[i % 3]:
-            if st.button(label, key=f"nav_{tq['id']}", use_container_width=True, type=btn_type):
-                if not is_current:
-                    st.session_state.current_q_id  = tq["id"]
-                    st.session_state.show_hint     = False
-                    st.session_state.show_solution = False
-                    st.session_state.run_output    = ""
-                    st.session_state.run_error     = ""
-                    st.session_state.run_figures   = []
-                    st.session_state.timer_start   = time.time()
-                    st.rerun()
+        level = st.session_state.difficulties.get(qid)
+        if level == "easy":
+            return f"{short_title} [easy]"
+        if level == "hard":
+            return f"{short_title} [hard]"
+        return short_title
+
+    _selected_topic = st.radio(
+        "Topics",
+        options=_topic_ids,
+        index=_topic_index,
+        format_func=_topic_label,
+        label_visibility="collapsed",
+        key=f"topic_nav_{st.session_state.active_bucket}",
+    )
+
+    if _selected_topic != q["id"]:
+        st.session_state.current_q_id  = _selected_topic
+        st.session_state.show_hint     = False
+        st.session_state.show_solution = False
+        st.session_state.run_output    = ""
+        st.session_state.run_error     = ""
+        st.session_state.run_figures   = []
+        st.session_state.timer_start   = time.time()
+        st.rerun()
 
 # ── CENTER: workspace + tracker ───────────────────────────────────────────────
 with center:
     # ── Code editor ──────────────────────────────────────────────────────────
     _default_code = f"# {q['title']}\n# Write your solution here\n\n"
     _mode = st.session_state.editor_mode.get(q["id"], "mine")
-    _solution_code = _extract_solution_code(q["solution"])
+    _base_solution_code = _extract_solution_code(q["solution"])
+    _custom_solution_code = st.session_state.custom_solutions.get(q["id"])
+    _invalid_custom_solution = False
+    if _custom_solution_code is not None and not _is_valid_python(_custom_solution_code):
+        _invalid_custom_solution = True
+        st.session_state.custom_solutions.pop(q["id"], None)
+        _custom_solution_code = None
+    _solution_code = _custom_solution_code or _base_solution_code
 
-    # Mode toggle
-    _tc1, _tc2, _spacer = st.columns([2, 2, 6])
+    # Pick content based on mode; key change forces editor remount with correct value
+    current_code = (
+        _solution_code
+        if _mode == "solution"
+        else st.session_state.user_code.get(q["id"], _default_code)
+    )
+    _editor_key = f"editor_{q['id']}_{_mode}"
+    _live_editor_code = st.session_state.get(_editor_key, current_code)
+
+    _mine_code = st.session_state.user_code.get(q["id"], _default_code)
+    _can_promote_solution = (
+        st.session_state.last_run_ok.get(q["id"], False)
+        and st.session_state.last_run_code.get(q["id"]) == _mine_code
+    )
+
+    # Mode toggle + action buttons on one row
+    _tc1, _tc2, _tc3, _tc4, _tc5 = st.columns([2, 2, 2, 2, 3])
     with _tc1:
         if st.button(
             "📝 My Code",
@@ -2581,8 +3130,51 @@ with center:
         ):
             st.session_state.editor_mode[q["id"]] = "solution"
             st.rerun()
+    with _tc3:
+        if st.button("▶ Run Code", type="primary", use_container_width=True):
+            _run_code(q["id"], _live_editor_code)
+    with _tc4:
+        if st.button("🧪 Run Solution", use_container_width=True):
+            if _mode == "solution":
+                _run_code(q["id"], _live_editor_code)
+            else:
+                _run_code(q["id"], _solution_code)
+    with _tc5:
+        if st.button("🗑️ Clear Editor", use_container_width=True):
+            st.session_state.user_code[q["id"]] = _default_code
+            st.session_state.editor_mode[q["id"]] = "mine"
+            st.session_state.run_output  = ""
+            st.session_state.run_error   = ""
+            st.session_state.run_figures = []
+            st.rerun()
+
+    _pc1, _pc2, _pc3 = st.columns([2, 2, 4])
+    with _pc1:
+        if st.button(
+            "⭐ Use My Code as Solution",
+            use_container_width=True,
+            disabled=not _can_promote_solution,
+            help="Enabled only when this exact My Code content just ran successfully.",
+        ):
+            st.session_state.custom_solutions[q["id"]] = _mine_code
+            st.session_state.editor_mode[q["id"]] = "solution"
+            st.rerun()
+    with _pc2:
+        if st.button(
+            "↩ Restore Original Solution",
+            use_container_width=True,
+            disabled=q["id"] not in st.session_state.custom_solutions,
+        ):
+            st.session_state.custom_solutions.pop(q["id"], None)
+            st.rerun()
+    with _pc3:
+        if _invalid_custom_solution:
+            st.caption("Invalid saved custom solution was detected and replaced with original.")
+        else:
+            st.caption("Autosave on: progress reloads across app restarts.")
 
     # Ctrl+S / Cmd+S — toggle My Code ↔ Solution
+    # Ctrl+Enter / Cmd+Enter / Shift+Enter — run current code
     # Must attach to EVERY iframe (Ace editor lives in its own iframe and
     # swallows keydown events before they reach window.parent.document).
     components.html("""
@@ -2603,11 +3195,34 @@ with center:
             }
         }
 
+        function clickRun() {
+            var btns = par.document.querySelectorAll('button');
+            for (var i = 0; i < btns.length; i++) {
+                var txt = (btns[i].innerText || btns[i].textContent || '').trim();
+                if (txt.includes('Run Code')) {
+                    btns[i].click();
+                    return;
+                }
+            }
+        }
+
         function onKey(e) {
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 clickToggle();
+                return;
+            }
+            if (!e.ctrlKey && !e.metaKey && e.shiftKey && e.key === 'Enter') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                clickRun();
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                clickRun();
             }
         }
 
@@ -2640,19 +3255,12 @@ with center:
     </script>
     """, height=0)
 
-    # Pick content based on mode; key change forces editor remount with correct value
-    current_code = (
-        _solution_code
-        if _mode == "solution"
-        else st.session_state.user_code.get(q["id"], _default_code)
-    )
-
     user_code = st_ace(
         value=current_code,
         language="python",
         theme="monokai",
-        key=f"editor_{q['id']}_{_mode}",
-        height=300,
+        key=_editor_key,
+        height=500,
         tab_size=4,
         font_size=14,
         show_gutter=True,
@@ -2666,19 +3274,6 @@ with center:
             st.session_state.user_code[q["id"]] = user_code
     else:
         user_code = current_code
-
-    rc1, rc2 = st.columns([1, 3])
-    with rc1:
-        if st.button("▶ Run Code", type="primary", use_container_width=True):
-            _run_code(user_code)
-    with rc2:
-        if st.button("🗑️ Clear Editor", use_container_width=True):
-            st.session_state.user_code[q["id"]] = _default_code
-            st.session_state.editor_mode[q["id"]] = "mine"
-            st.session_state.run_output  = ""
-            st.session_state.run_error   = ""
-            st.session_state.run_figures = []
-            st.rerun()
 
     if st.session_state.run_error:
         st.error("**Runtime error:**")
@@ -2695,42 +3290,17 @@ with center:
         "use Jupyter for interactive plots"
     )
 
-    # ── Code diff (always-on hint) ─────────────────────────────────────────
-    _wip_diff = st.session_state.user_code.get(q["id"], "").strip()
-    _, _dtoggle_col = st.columns([3, 2])
-    with _dtoggle_col:
-        _hide_diff = st.toggle(
-            "🧠 Hard mode (hide diff)",
-            value=st.session_state.get("diff_hard_mode", False),
-            key="diff_hard_mode_toggle",
-            help="Hard: diff collapsed — think before you peek",
-        )
-        st.session_state.diff_hard_mode = _hide_diff
-    with st.expander("🔍 Diff: My Code vs Solution", expanded=not _hide_diff):
-        if not _wip_diff:
-            st.info("✏️ Write some code above — diff will appear here automatically.")
-        else:
-            def _norm(text, strip_boilerplate=False):
-                """Strip trailing whitespace and collapse internal spaces per line."""
-                _boiler = {f"# {q['title']}", "# Write your solution here"}
-                lines = text.splitlines()
-                if strip_boilerplate:
-                    lines = [ln for ln in lines if ln.strip() not in _boiler]
-                    while lines and not lines[0].strip():
-                        lines.pop(0)
-                return [re.sub(r"  +", " ", ln.rstrip()) for ln in lines]
-            _diff_lines = list(difflib.unified_diff(
-                _norm(_wip_diff, strip_boilerplate=True),
-                _norm(_solution_code),
-                lineterm="",
-                fromfile="My Code",
-                tofile="Solution",
-                n=3,
-            ))
-            if _diff_lines:
-                st.code("\n".join(_diff_lines), language="diff")
-            else:
-                st.success("✅ Your code matches the solution!")
+    st.divider()
+    st.markdown("**📌 My Notes**")
+    _note = st.text_area(
+        "notes",
+        value=st.session_state.notes.get(q["id"], ""),
+        height=90,
+        placeholder="Key insight, what you missed, mnemonic to remember...",
+        key=f"note_{q['id']}",
+        label_visibility="collapsed",
+    )
+    st.session_state.notes[q["id"]] = _note
 
     # Miss tracker
     if st.session_state.miss_counts:
@@ -2747,6 +3317,52 @@ with center:
 
 # ── RIGHT: reference panel ────────────────────────────────────────────────────
 with right:
+    # ── Code diff ────────────────────────────────────────────────────────────
+    _wip_diff = st.session_state.user_code.get(q["id"], "").strip()
+    _hide_diff = st.session_state.get("diff_hard_mode", False)
+    with st.expander("🔍 Diff: My Code vs Solution", expanded=not _hide_diff):
+        if not _wip_diff:
+            st.info("✏️ Write some code above — diff will appear here.")
+        else:
+            def _norm(text, strip_boilerplate=False):
+                """Normalise lines for diff comparison."""
+                _boiler = {f"# {q['title']}", "# Write your solution here"}
+                lines = text.splitlines()
+                if strip_boilerplate:
+                    lines = [ln for ln in lines if ln.strip() not in _boiler]
+                    while lines and not lines[0].strip():
+                        lines.pop(0)
+                out = []
+                for ln in lines:
+                    stripped = ln.strip()
+                    if stripped.startswith("#"):
+                        continue
+                    if stripped and stripped[0] in ")]}":
+                        ln = stripped
+                    out.append(re.sub(r"  +", " ", ln.rstrip()))
+                return out
+            _diff_lines = list(difflib.unified_diff(
+                _norm(_wip_diff, strip_boilerplate=True),
+                _norm(_solution_code),
+                lineterm="",
+                fromfile="My Code",
+                tofile="Solution",
+                n=3,
+            ))
+            if _diff_lines:
+                st.code("\n".join(_diff_lines), language="diff")
+            else:
+                st.success("✅ Matches solution!")
+
+    _hide_diff = st.toggle(
+        "🧠 Hard mode (hide diff)",
+        value=st.session_state.get("diff_hard_mode", False),
+        key="diff_hard_mode_toggle",
+        help="Hard: diff collapsed — think before you peek",
+    )
+    st.session_state.diff_hard_mode = _hide_diff
+
+    st.divider()
     st.markdown("### 📋 Reference Panel")
 
     # Hard-only toggle
@@ -2795,20 +3411,6 @@ with right:
 
     st.divider()
 
-    # Per-question notes
-    st.markdown("**📌 My Notes**")
-    _note = st.text_area(
-        "notes",
-        value=st.session_state.notes.get(q["id"], ""),
-        height=90,
-        placeholder="Key insight, what you missed, mnemonic to remember...",
-        key=f"note_{q['id']}",
-        label_visibility="collapsed",
-    )
-    st.session_state.notes[q["id"]] = _note
-
-    st.divider()
-
     # Hint toggle
     hint_label = "💡 Hide Hint" if st.session_state.show_hint else "💡 Show Hint"
     if st.button(hint_label, use_container_width=True):
@@ -2827,3 +3429,6 @@ with right:
         st.session_state.difficulties = {}
         st.session_state.miss_counts  = {}
         st.rerun()
+
+# Persist progress at the end of each rerun.
+_save_progress_to_disk()
