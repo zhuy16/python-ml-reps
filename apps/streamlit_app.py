@@ -20,6 +20,14 @@ st.markdown("""
 .block-container { padding-top: 0.6rem !important; padding-bottom: 0rem !important; }
 [data-testid="baseButton-primary"][id*="nav_"],
 [data-testid="baseButton-secondary"][id*="nav_"] { font-size: 0.55rem !important; padding: 0.2rem 0.3rem !important; }
+/* Compact the center panel action buttons */
+[data-testid="column"] [data-testid="baseButton-primary"],
+[data-testid="column"] [data-testid="baseButton-secondary"] {
+    font-size: 0.75rem !important;
+    padding: 0.2rem 0.4rem !important;
+    min-height: 1.8rem !important;
+    line-height: 1.2 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2351,11 +2359,14 @@ plt.tight_layout()
 plt.show()
 ```""",
     },
+]
+
+INTEGRATED_QUESTIONS = [
     {
         "id": "clinical_integrated_drill",
         "title": "Integrated Clinical Genomics Drill",
-        "category": "Survival Analysis",
-        "bucket": "Clinical",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
         "prompt": """\
 **Task:** Complete one end-to-end interview drill without context switching.
 
@@ -2622,9 +2633,6 @@ print(summary)
 ```
 """,
     },
-]
-
-INTEGRATED_QUESTIONS = [
     {
         "id": "integrated_vcf_eda_pipeline",
         "title": "Integrated VCF Pipeline: Parse → Clean → EDA → Merge → Plot",
@@ -2836,6 +2844,11 @@ _defaults = {
     "difficulties":  {},   # q_id → "easy" | "hard"
     "miss_counts":   {},   # q_id → int
     "hard_only":     False,
+    "hide_left_panel": False,
+    "hide_right_panel": False,
+    "editor_height": 500,
+    "right_panel_width": 4.4,
+    "left_panel_width": 1.8,
     "timer_start":   time.time(),
     "user_code":     {},   # q_id → str  (persists per question)
     "editor_mode":   {},   # q_id → "mine" | "solution"
@@ -2853,12 +2866,19 @@ for _k, _v in _defaults.items():
 
 _PROGRESS_PATH = Path(__file__).resolve().parents[1] / ".streamlit" / "practice_progress.json"
 _PERSIST_KEYS = [
+    "active_bucket",
+    "current_q_id",
     "user_code",
     "notes",
     "editor_mode",
     "difficulties",
     "miss_counts",
     "custom_solutions",
+    "hide_left_panel",
+    "hide_right_panel",
+    "editor_height",
+    "right_panel_width",
+    "left_panel_width",
 ]
 
 
@@ -2887,6 +2907,23 @@ if not st.session_state.get("_progress_loaded", False):
         _v = _persisted.get(_k)
         if isinstance(st.session_state.get(_k), dict) and isinstance(_v, dict):
             st.session_state[_k].update(_v)
+        elif _v is not None:
+            st.session_state[_k] = _v
+
+    # Validate restored navigation state against current question bank.
+    _valid_buckets = {"Basic", "Bioinformatics Engineer", "Clinical", "Integrated"}
+    if st.session_state.active_bucket not in _valid_buckets:
+        st.session_state.active_bucket = "Basic"
+
+    _all_ids = {q["id"] for q in ALL_QUESTIONS}
+    if st.session_state.current_q_id not in _all_ids:
+        _bucket_qs = [
+            q for q in ALL_QUESTIONS
+            if q.get("bucket", "Basic") == st.session_state.active_bucket
+        ]
+        if _bucket_qs:
+            st.session_state.current_q_id = _bucket_qs[0]["id"]
+
     st.session_state._progress_loaded = True
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2946,10 +2983,78 @@ def _is_valid_python(code: str) -> bool:
         return False
 
 
+def _coerce_code_text(value, fallback: str = "") -> str:
+    """Ensure code execution always receives a string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(fallback, str):
+        return fallback
+    return ""
+
+
+def _repair_split_print_strings(code: str) -> str:
+    """Repair print()/f-print strings split across lines by editor corruption."""
+    if not isinstance(code, str):
+        return ""
+
+    lines = code.splitlines()
+    out = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r'^(\s*)print\((f?)"(.*)$', line)
+        if not m:
+            out.append(line)
+            i += 1
+            continue
+
+        indent = m.group(1)
+        f_prefix = m.group(2)
+        rest = m.group(3)
+
+        # Already valid on one line.
+        if '"' in rest:
+            out.append(line)
+            i += 1
+            continue
+
+        body_parts = [rest] if rest else []
+        i += 1
+        repaired = False
+
+        while i < len(lines):
+            cur = lines[i]
+            quote_pos = cur.find('"')
+            if quote_pos != -1:
+                before = cur[:quote_pos]
+                if before:
+                    body_parts.append(before)
+                tail = cur[quote_pos + 1 :]
+
+                body = "\n".join(body_parts).strip("\n")
+                body = body.replace('\\', '\\\\').replace('"', '\\"')
+                out.append(f'{indent}print({f_prefix}"{body}"{tail}')
+                i += 1
+                repaired = True
+                break
+
+            body_parts.append(cur)
+            i += 1
+
+        if not repaired:
+            # Could not find close quote; preserve original line to avoid data loss.
+            out.append(line)
+
+    return "\n".join(out)
+
+
 def _run_code(qid: str, code: str):
     """Execute user code, capture stdout + matplotlib figures."""
     import io, contextlib, traceback, matplotlib
     import matplotlib.pyplot as plt
+    code = _coerce_code_text(code)
+    code = _repair_split_print_strings(code)
     matplotlib.use("Agg")          # non-interactive backend, safe for Streamlit
     plt.close("all")               # clear any leftover figures
     buf = io.StringIO()
@@ -2962,6 +3067,27 @@ def _run_code(qid: str, code: str):
         st.session_state.last_run_ok[qid] = True
         # Grab every figure matplotlib created during exec
         st.session_state.run_figures = [plt.figure(n) for n in plt.get_fignums()]
+    except SyntaxError as e:
+        # One more repair pass for multiline-broken print/f-string blocks.
+        msg = str(e)
+        if "unterminated string literal" in msg or "unterminated f-string literal" in msg:
+            repaired = _repair_split_print_strings(code)
+            if repaired != code:
+                try:
+                    st.session_state.last_run_code[qid] = repaired
+                    with contextlib.redirect_stdout(buf):
+                        exec(compile(repaired, "<editor>", "exec"), {})
+                    st.session_state.run_output = buf.getvalue() or ""
+                    st.session_state.run_error = ""
+                    st.session_state.last_run_ok[qid] = True
+                    st.session_state.run_figures = [plt.figure(n) for n in plt.get_fignums()]
+                    return
+                except Exception:
+                    pass
+        st.session_state.run_output  = buf.getvalue()
+        st.session_state.run_error   = traceback.format_exc()
+        st.session_state.last_run_ok[qid] = False
+        st.session_state.run_figures = []
     except Exception:
         st.session_state.run_output  = buf.getvalue()
         st.session_state.run_error   = traceback.format_exc()
@@ -3029,57 +3155,118 @@ if _bucket_choice != st.session_state.active_bucket:
     st.session_state.timer_start   = time.time()
     st.rerun()
 
+_ui1, _ui2, _ui3, _ui4, _ui5, _ui6 = st.columns([1.25, 1.25, 2.0, 2.0, 2.0, 1.5])
+with _ui1:
+    st.session_state.hide_left_panel = st.toggle(
+        "Hide left panel",
+        value=st.session_state.hide_left_panel,
+        key="hide_left_panel_toggle",
+    )
+with _ui2:
+    st.session_state.hide_right_panel = st.toggle(
+        "Hide right panel",
+        value=st.session_state.hide_right_panel,
+        key="hide_right_panel_toggle",
+    )
+with _ui3:
+    st.session_state.left_panel_width = st.slider(
+        "Left panel width",
+        min_value=1.0,
+        max_value=4.0,
+        value=float(st.session_state.left_panel_width),
+        step=0.1,
+        key="left_panel_width_slider",
+    )
+with _ui4:
+    st.session_state.editor_height = st.slider(
+        "Editor height",
+        min_value=380,
+        max_value=1200,
+        value=int(st.session_state.editor_height),
+        step=20,
+        key="editor_height_slider",
+    )
+with _ui5:
+    st.session_state.right_panel_width = st.slider(
+        "Right panel width",
+        min_value=2.0,
+        max_value=7.0,
+        value=float(st.session_state.right_panel_width),
+        step=0.2,
+        key="right_panel_width_slider",
+    )
+with _ui6:
+    st.caption("Customize layout.")
+
 q = _current()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN LAYOUT  ·  LEFT · CENTER · RIGHT
 # ──────────────────────────────────────────────────────────────────────────────
-left, center, right = st.columns([1.33, 4.9, 3.77])
+if st.session_state.hide_left_panel and st.session_state.hide_right_panel:
+    center = st.container()
+    left = None
+    right = None
+elif st.session_state.hide_left_panel:
+    _rpw = float(st.session_state.right_panel_width)
+    center, right = st.columns([10.0 - _rpw, _rpw])
+    left = None
+elif st.session_state.hide_right_panel:
+    _lpw = float(st.session_state.left_panel_width)
+    left, center = st.columns([_lpw, 10.0 - _lpw])
+    right = None
+else:
+    _rpw = float(st.session_state.right_panel_width)
+    _lpw = float(st.session_state.left_panel_width)
+    left, center, right = st.columns([_lpw, max(10.0 - _lpw - _rpw, 1.0), _rpw])
 
 # ── LEFT: question prompt ─────────────────────────────────────────────────────
-with left:
-    cat_icon = CATEGORY_ICON.get(q["category"], "⚪")
-    diff     = st.session_state.difficulties.get(q["id"])
-    diff_badge = {"easy": " ✅", "hard": " 🔴"}.get(diff, "")
+if left is not None:
+    with left:
+        cat_icon = CATEGORY_ICON.get(q["category"], "⚪")
+        diff     = st.session_state.difficulties.get(q["id"])
+        diff_badge = {"easy": " ✅", "hard": " 🔴"}.get(diff, "")
 
-    st.markdown(f"**{cat_icon} {q['category']}**&nbsp;&nbsp; ⏱️ `{_elapsed()}`")
-    st.markdown(f"## {q['title']}{diff_badge}")
-    st.markdown(q["prompt"])
+        st.markdown(f"**{cat_icon} {q['category']}**&nbsp;&nbsp; ⏱️ `{_elapsed()}`")
+        st.markdown(f"#### {q['title']}{diff_badge}")
+        st.markdown(q["prompt"])
 
-    st.divider()
-    st.markdown("<small>🗂️ <b>Topics</b></small>", unsafe_allow_html=True)
-    _topics = _active_questions()
-    _topic_ids = [tq["id"] for tq in _topics]
-    _topic_index = _topic_ids.index(q["id"]) if q["id"] in _topic_ids else 0
+        st.divider()
+        st.markdown("<small>🗂️ <b>Topics</b></small>", unsafe_allow_html=True)
+        _topics = _active_questions()
+        _topic_ids = [tq["id"] for tq in _topics]
+        _topic_index = _topic_ids.index(q["id"]) if q["id"] in _topic_ids else 0
 
-    def _topic_label(qid: str) -> str:
-        tq = next(t for t in _topics if t["id"] == qid)
-        short_title = tq["title"].split("—")[0].split("(")[0].strip()
-        level = st.session_state.difficulties.get(qid)
-        if level == "easy":
-            return f"{short_title} [easy]"
-        if level == "hard":
-            return f"{short_title} [hard]"
-        return short_title
+        def _topic_label(qid: str) -> str:
+            tq = next(t for t in _topics if t["id"] == qid)
+            short_title = tq["title"].split("—")[0].split("(")[0].strip()
+            level = st.session_state.difficulties.get(qid)
+            if level == "easy":
+                return f"{short_title} [easy]"
+            if level == "hard":
+                return f"{short_title} [hard]"
+            return short_title
 
-    _selected_topic = st.radio(
-        "Topics",
-        options=_topic_ids,
-        index=_topic_index,
-        format_func=_topic_label,
-        label_visibility="collapsed",
-        key=f"topic_nav_{st.session_state.active_bucket}",
-    )
+        _selected_topic = st.radio(
+            "Topics",
+            options=_topic_ids,
+            index=_topic_index,
+            format_func=_topic_label,
+            label_visibility="collapsed",
+            key=f"topic_nav_{st.session_state.active_bucket}",
+        )
 
-    if _selected_topic != q["id"]:
-        st.session_state.current_q_id  = _selected_topic
-        st.session_state.show_hint     = False
-        st.session_state.show_solution = False
-        st.session_state.run_output    = ""
-        st.session_state.run_error     = ""
-        st.session_state.run_figures   = []
-        st.session_state.timer_start   = time.time()
-        st.rerun()
+        if _selected_topic != q["id"]:
+            st.session_state.current_q_id  = _selected_topic
+            st.session_state.show_hint     = False
+            st.session_state.show_solution = False
+            st.session_state.run_output    = ""
+            st.session_state.run_error     = ""
+            st.session_state.run_figures   = []
+            st.session_state.timer_start   = time.time()
+            st.rerun()
+else:
+    diff = st.session_state.difficulties.get(q["id"])
 
 # ── CENTER: workspace + tracker ───────────────────────────────────────────────
 with center:
@@ -3102,7 +3289,10 @@ with center:
         else st.session_state.user_code.get(q["id"], _default_code)
     )
     _editor_key = f"editor_{q['id']}_{_mode}"
-    _live_editor_code = st.session_state.get(_editor_key, current_code)
+    _live_editor_code = _coerce_code_text(
+        st.session_state.get(_editor_key, current_code),
+        current_code,
+    )
 
     _mine_code = st.session_state.user_code.get(q["id"], _default_code)
     _can_promote_solution = (
@@ -3135,10 +3325,7 @@ with center:
             _run_code(q["id"], _live_editor_code)
     with _tc4:
         if st.button("🧪 Run Solution", use_container_width=True):
-            if _mode == "solution":
-                _run_code(q["id"], _live_editor_code)
-            else:
-                _run_code(q["id"], _solution_code)
+            _run_code(q["id"], _solution_code)
     with _tc5:
         if st.button("🗑️ Clear Editor", use_container_width=True):
             st.session_state.user_code[q["id"]] = _default_code
@@ -3148,7 +3335,7 @@ with center:
             st.session_state.run_figures = []
             st.rerun()
 
-    _pc1, _pc2, _pc3 = st.columns([2, 2, 4])
+    _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns([2, 2, 1.5, 1.5, 2])
     with _pc1:
         if st.button(
             "⭐ Use My Code as Solution",
@@ -3168,6 +3355,25 @@ with center:
             st.session_state.custom_solutions.pop(q["id"], None)
             st.rerun()
     with _pc3:
+        if st.button(
+            "✅ Easy" if diff == "easy" else "Mark Easy",
+            use_container_width=True,
+            type="primary" if diff == "easy" else "secondary",
+        ):
+            st.session_state.difficulties[q["id"]] = "easy"
+            st.rerun()
+    with _pc4:
+        if st.button(
+            "🔴 Hard" if diff == "hard" else "Mark Hard",
+            use_container_width=True,
+            type="primary" if diff == "hard" else "secondary",
+        ):
+            st.session_state.difficulties[q["id"]] = "hard"
+            st.session_state.miss_counts[q["id"]] = (
+                st.session_state.miss_counts.get(q["id"], 0) + 1
+            )
+            st.rerun()
+    with _pc5:
         if _invalid_custom_solution:
             st.caption("Invalid saved custom solution was detected and replaced with original.")
         else:
@@ -3180,7 +3386,10 @@ with center:
     components.html("""
     <script>
     (function() {
-        var par = window.parent;
+        // Use window.top so we reach the real page even if Streamlit adds
+        // an extra iframe wrapping layer.
+        var par;
+        try { par = window.top; } catch(e) { par = window.parent; }
 
         function clickToggle() {
             var btns = par.document.querySelectorAll('button');
@@ -3213,7 +3422,7 @@ with center:
                 clickToggle();
                 return;
             }
-            if (!e.ctrlKey && !e.metaKey && e.shiftKey && e.key === 'Enter') {
+            if (e.shiftKey && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 clickRun();
@@ -3226,31 +3435,49 @@ with center:
             }
         }
 
-        // Parent document — remove old listener then re-add fresh one
-        if (par._editorShortcut) {
-            par.document.removeEventListener('keydown', par._editorShortcut, true);
-        }
-        par._editorShortcut = onKey;
-        par.document.addEventListener('keydown', onKey, true);
-
-        // All iframes (Ace editor, other components) — attach once per doc
-        function attachToFrames() {
-            var frames = par.document.querySelectorAll('iframe');
-            for (var i = 0; i < frames.length; i++) {
-                try {
-                    var doc = frames[i].contentDocument;
-                    if (doc && !doc._shortcutBound) {
-                        doc._shortcutBound = true;
-                        doc.addEventListener('keydown', onKey, true);
-                    }
-                } catch(ex) {}
-            }
+        // Attach to a document: always remove the old listener first so
+        // re-renders never leave stale or duplicate handlers.
+        function attachToDoc(doc) {
+            try {
+                if (!doc) return;
+                if (doc._kbOnKey) doc.removeEventListener('keydown', doc._kbOnKey, true);
+                doc._kbOnKey = onKey;
+                doc.addEventListener('keydown', onKey, true);
+            } catch(ex) {}
         }
 
-        attachToFrames();
-        // Poll for newly mounted iframes (e.g. Ace editor remount after toggle)
+        // Recursively walk all iframes (handles nested components/Ace iframes).
+        function attachToAllFrames(doc) {
+            try {
+                var frames = doc.querySelectorAll('iframe');
+                for (var i = 0; i < frames.length; i++) {
+                    try {
+                        var fdoc = frames[i].contentDocument;
+                        if (fdoc) {
+                            attachToDoc(fdoc);
+                            attachToAllFrames(fdoc);
+                        }
+                    } catch(ex) {}
+                }
+            } catch(ex) {}
+        }
+
+        attachToDoc(par.document);
+        attachToAllFrames(par.document);
+
+        // Also cover window.parent if it differs from top (intermediate layer).
+        if (window.parent !== par) {
+            try {
+                attachToDoc(window.parent.document);
+                attachToAllFrames(window.parent.document);
+            } catch(ex) {}
+        }
+
+        // Poll so newly mounted iframes (e.g. Ace editor after a rerun) get covered.
         if (par._shortcutPoll) clearInterval(par._shortcutPoll);
-        par._shortcutPoll = setInterval(attachToFrames, 800);
+        par._shortcutPoll = setInterval(function() {
+            attachToAllFrames(par.document);
+        }, 800);
     })();
     </script>
     """, height=0)
@@ -3260,7 +3487,7 @@ with center:
         language="python",
         theme="monokai",
         key=_editor_key,
-        height=500,
+        height=int(st.session_state.editor_height),
         tab_size=4,
         font_size=14,
         show_gutter=True,
@@ -3275,18 +3502,8 @@ with center:
     else:
         user_code = current_code
 
-    if st.session_state.run_error:
-        st.error("**Runtime error:**")
-        st.code(st.session_state.run_error, language="python")
-    else:
-        if st.session_state.run_output:
-            st.success("**Output:**")
-            st.code(st.session_state.run_output, language="")
-        for fig in st.session_state.run_figures:
-            st.pyplot(fig)
-
     st.caption(
-        "💡 `print()` output appears above · matplotlib plots render inline · "
+        "💡 `print()` output appears in right panel · matplotlib plots render inline · "
         "use Jupyter for interactive plots"
     )
 
@@ -3316,119 +3533,40 @@ with center:
 
 
 # ── RIGHT: reference panel ────────────────────────────────────────────────────
-with right:
-    # ── Code diff ────────────────────────────────────────────────────────────
-    _wip_diff = st.session_state.user_code.get(q["id"], "").strip()
-    _hide_diff = st.session_state.get("diff_hard_mode", False)
-    with st.expander("🔍 Diff: My Code vs Solution", expanded=not _hide_diff):
-        if not _wip_diff:
-            st.info("✏️ Write some code above — diff will appear here.")
+if right is not None:
+    with right:
+        # ── Controls (top) ───────────────────────────────────────────────────
+        new_hard_only = st.toggle(
+            "🔴 Hard Questions Only",
+            value=st.session_state.hard_only,
+            key="hard_only_toggle",
+        )
+        if new_hard_only != st.session_state.hard_only:
+            st.session_state.hard_only = new_hard_only
+            if new_hard_only:
+                pool = _pool()
+                if pool:
+                    st.session_state.current_q_id = random.choice(pool)
+            st.session_state.show_hint     = False
+            st.session_state.show_solution = False
+            st.rerun()
+
+        # ── Output ───────────────────────────────────────────────────────────
+        if st.session_state.run_error:
+            _out_container = st.container(height=int(st.session_state.editor_height))
+            with _out_container:
+                st.error("**Runtime error:**")
+                st.code(st.session_state.run_error, language="python")
+        elif st.session_state.run_output or st.session_state.run_figures:
+            _out_container = st.container(height=int(st.session_state.editor_height))
+            with _out_container:
+                st.success("**Output:**")
+                if st.session_state.run_output:
+                    st.code(st.session_state.run_output, language="")
+                for fig in st.session_state.run_figures:
+                    st.pyplot(fig)
         else:
-            def _norm(text, strip_boilerplate=False):
-                """Normalise lines for diff comparison."""
-                _boiler = {f"# {q['title']}", "# Write your solution here"}
-                lines = text.splitlines()
-                if strip_boilerplate:
-                    lines = [ln for ln in lines if ln.strip() not in _boiler]
-                    while lines and not lines[0].strip():
-                        lines.pop(0)
-                out = []
-                for ln in lines:
-                    stripped = ln.strip()
-                    if stripped.startswith("#"):
-                        continue
-                    if stripped and stripped[0] in ")]}":
-                        ln = stripped
-                    out.append(re.sub(r"  +", " ", ln.rstrip()))
-                return out
-            _diff_lines = list(difflib.unified_diff(
-                _norm(_wip_diff, strip_boilerplate=True),
-                _norm(_solution_code),
-                lineterm="",
-                fromfile="My Code",
-                tofile="Solution",
-                n=3,
-            ))
-            if _diff_lines:
-                st.code("\n".join(_diff_lines), language="diff")
-            else:
-                st.success("✅ Matches solution!")
-
-    _hide_diff = st.toggle(
-        "🧠 Hard mode (hide diff)",
-        value=st.session_state.get("diff_hard_mode", False),
-        key="diff_hard_mode_toggle",
-        help="Hard: diff collapsed — think before you peek",
-    )
-    st.session_state.diff_hard_mode = _hide_diff
-
-    st.divider()
-    st.markdown("### 📋 Reference Panel")
-
-    # Hard-only toggle
-    new_hard_only = st.toggle(
-        "🔴 Hard Questions Only",
-        value=st.session_state.hard_only,
-        key="hard_only_toggle",
-    )
-    if new_hard_only != st.session_state.hard_only:
-        st.session_state.hard_only = new_hard_only
-        if new_hard_only:
-            pool = _pool()
-            if pool:
-                st.session_state.current_q_id = random.choice(pool)
-        st.session_state.show_hint     = False
-        st.session_state.show_solution = False
-        st.rerun()
-
-    st.divider()
-
-    # Mark Easy / Hard
-    st.markdown("**Rate this question:**")
-    mc1, mc2 = st.columns(2)
-    with mc1:
-        if st.button(
-            "✅ Easy" if diff == "easy" else "Mark Easy",
-            use_container_width=True,
-            type="primary" if diff == "easy" else "secondary",
-        ):
-            st.session_state.difficulties[q["id"]] = "easy"
-            st.rerun()
-    with mc2:
-        if st.button(
-            "🔴 Hard" if diff == "hard" else "Mark Hard",
-            use_container_width=True,
-            type="primary" if diff == "hard" else "secondary",
-        ):
-            st.session_state.difficulties[q["id"]] = "hard"
-            st.session_state.miss_counts[q["id"]] = (
-                st.session_state.miss_counts.get(q["id"], 0) + 1
-            )
-            st.rerun()
-
-    if diff:
-        st.caption(f"Marked as: **{diff}**")
-
-    st.divider()
-
-    # Hint toggle
-    hint_label = "💡 Hide Hint" if st.session_state.show_hint else "💡 Show Hint"
-    if st.button(hint_label, use_container_width=True):
-        st.session_state.show_hint     = not st.session_state.show_hint
-        st.session_state.show_solution = False
-        st.rerun()
-
-    if st.session_state.show_hint:
-        st.markdown("**💡 Hint:**")
-        st.markdown(q["hint"])
-
-    st.divider()
-
-    # Reset progress
-    if st.button("🗑️ Reset Progress", use_container_width=True):
-        st.session_state.difficulties = {}
-        st.session_state.miss_counts  = {}
-        st.rerun()
+            st.caption("▶ Run your code — output appears here.")
 
 # Persist progress at the end of each rerun.
 _save_progress_to_disk()
