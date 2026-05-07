@@ -2816,10 +2816,622 @@ axes[2].tick_params(axis="x", rotation=45)
 plt.tight_layout()
 plt.show()
 ```""",
+    },
+    {
+        "id": "integrated_pytorch_common_workflow",
+        "title": "Integrated PyTorch Workflow: Tensor -> DataLoader -> Train -> Evaluate",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+**Task:** Complete one short end-to-end PyTorch practice script covering common workflow pieces.
+
+1. **Data generation**
+   - Create synthetic binary classification data (`X` with shape `(400, 10)`)
+   - Build labels from a linear rule + sigmoid threshold
+2. **Dataset + DataLoader**
+   - Wrap tensors in `TensorDataset`
+   - Split into train/validation and create DataLoaders
+3. **Model**
+   - Define a small MLP: `Linear(10, 32) -> ReLU -> Linear(32, 1)`
+4. **Training loop**
+   - Use `BCEWithLogitsLoss` + `Adam`
+   - Train for ~15 epochs with `zero_grad -> forward -> loss -> backward -> step`
+5. **Evaluation**
+   - Switch to `eval()` and `torch.no_grad()`
+   - Compute validation accuracy
+6. **Save/load**
+   - Save and reload `state_dict` once, then verify predictions still run
+""",
+        "workspace_tip": (
+            "This is the most interview-common PyTorch pattern. Keep device handling simple "
+            "(CPU is fine) and focus on clean train/eval mode switching."
+        ),
+        "hint": """\
+```python
+from torch.utils.data import TensorDataset, DataLoader, random_split
+import torch.nn as nn
+
+model = nn.Sequential(nn.Linear(10, 32), nn.ReLU(), nn.Linear(32, 1))
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+```
+""",
+        "solution": """\
+```python
+from pathlib import Path
+import torch
+import torch.nn as nn
+from torch.utils.data import TensorDataset, DataLoader, random_split
+
+torch.manual_seed(42)
+
+# 1) Synthetic binary data
+n, d = 400, 10
+X = torch.randn(n, d)
+true_w = torch.randn(d, 1)
+logits = X @ true_w + 0.25 * torch.randn(n, 1)
+y = (torch.sigmoid(logits) > 0.5).float()
+
+# 2) Dataset + DataLoader
+dataset = TensorDataset(X, y)
+n_train = int(0.8 * n)
+n_val = n - n_train
+train_ds, val_ds = random_split(dataset, [n_train, n_val])
+train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_ds, batch_size=64, shuffle=False)
+
+# 3) Model
+model = nn.Sequential(
+    nn.Linear(10, 32),
+    nn.ReLU(),
+    nn.Linear(32, 1),
+)
+
+# 4) Training
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+
+for epoch in range(1, 16):
+    model.train()
+    running = 0.0
+    for xb, yb in train_loader:
+        optimizer.zero_grad()
+        out = model(xb)
+        loss = criterion(out, yb)
+        loss.backward()
+        optimizer.step()
+        running += loss.item() * xb.size(0)
+    if epoch % 5 == 0:
+        print(f"Epoch {epoch:2d}  train_loss={running / n_train:.4f}")
+
+# 5) Evaluation
+model.eval()
+correct = 0
+total = 0
+with torch.no_grad():
+    for xb, yb in val_loader:
+        probs = torch.sigmoid(model(xb))
+        preds = (probs > 0.5).float()
+        correct += (preds == yb).sum().item()
+        total += yb.numel()
+val_acc = correct / total
+print(f"Validation accuracy: {val_acc:.3f}")
+
+# 6) Save/load state_dict
+ckpt_path = Path(".streamlit") / "pt_integrated_model.pt"
+ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+torch.save(model.state_dict(), ckpt_path)
+
+reloaded = nn.Sequential(
+    nn.Linear(10, 32),
+    nn.ReLU(),
+    nn.Linear(32, 1),
+)
+reloaded.load_state_dict(torch.load(ckpt_path, weights_only=True))
+reloaded.eval()
+
+with torch.no_grad():
+    sample_probs = torch.sigmoid(reloaded(X[:5])).squeeze()
+print("Sample probabilities:", sample_probs)
+```
+""",
     }
 ]
 
-ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS
+PYTORCH_QUESTIONS = [
+    {
+        "id": "pt_tensor_basics",
+        "title": "Tensor Creation & Ops",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Practice the most common ways to create and manipulate PyTorch tensors.
+
+1. Create a 3×4 tensor of zeros, a 3×4 tensor of ones, and a 3×4 tensor filled with a constant (e.g. 7)
+2. Create a 1-D tensor from the Python list `[1, 2, 3, 4, 5]`
+3. Generate a 3×3 tensor of random floats (uniform [0,1]) and another of random integers in [0, 10)
+4. Print the shape, dtype, and device of each tensor
+5. Reshape the list tensor to (5, 1), then squeeze it back to (5,)
+6. Perform element-wise addition, subtraction, and matrix multiplication (use `@` or `torch.matmul`) on compatible shapes
+""",
+        "workspace_tip": (
+            "Useful: torch.zeros, torch.ones, torch.full, torch.tensor, "
+            "torch.rand, torch.randint, .shape, .dtype, .device, .reshape, .squeeze, @"
+        ),
+        "hint": """\
+```python
+import torch
+z = torch.zeros(3, 4)
+o = torch.ones(3, 4)
+c = torch.full((3, 4), 7.0)
+v = torch.tensor([1, 2, 3, 4, 5], dtype=torch.float32)
+r = torch.rand(3, 3)
+ri = torch.randint(0, 10, (3, 3))
+print(z.shape, z.dtype, z.device)
+```""",
+        "solution": """\
+```python
+import torch
+
+# Creation
+z  = torch.zeros(3, 4)
+o  = torch.ones(3, 4)
+c  = torch.full((3, 4), 7.0)
+v  = torch.tensor([1, 2, 3, 4, 5], dtype=torch.float32)
+r  = torch.rand(3, 3)
+ri = torch.randint(0, 10, (3, 3))
+
+for name, t in [("zeros", z), ("ones", o), ("full", c), ("vector", v), ("rand", r), ("randint", ri)]:
+    print(f"{name}: shape={t.shape}  dtype={t.dtype}  device={t.device}")
+
+# Reshape / squeeze
+v_col = v.reshape(5, 1)
+v_back = v_col.squeeze()
+print("\\nreshaped:", v_col.shape, "  squeezed back:", v_back.shape)
+
+# Arithmetic on 3x3 tensors
+a = torch.rand(3, 3)
+b = torch.rand(3, 3)
+print("\\nadd:\\n",  a + b)
+print("sub:\\n",  a - b)
+print("matmul:\\n", a @ b)
+```""",
+    },
+    {
+        "id": "pt_autograd",
+        "title": "Autograd & Gradient Computation",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Understand PyTorch's automatic differentiation.
+
+1. Create scalar tensors `x = 3.0` and `w = 2.0` with `requires_grad=True`
+2. Compute `y = w * x ** 2 + 3 * x - 1`
+3. Call `y.backward()` and print `x.grad` and `w.grad`
+4. Verify manually: dy/dx = 2wx + 3 and dy/dw = x²
+5. Zero the gradients, then compute `z = (w * x).sum()` and call `.backward()` again
+6. Show how `torch.no_grad()` context manager prevents gradient tracking
+""",
+        "workspace_tip": (
+            "Gradients accumulate — always call .zero_() before a new backward pass. "
+            "Use torch.no_grad() for inference to save memory."
+        ),
+        "hint": """\
+```python
+import torch
+x = torch.tensor(3.0, requires_grad=True)
+w = torch.tensor(2.0, requires_grad=True)
+y = w * x**2 + 3*x - 1
+y.backward()
+print(x.grad)  # 2*w*x + 3 = 15
+print(w.grad)  # x**2 = 9
+```""",
+        "solution": """\
+```python
+import torch
+
+x = torch.tensor(3.0, requires_grad=True)
+w = torch.tensor(2.0, requires_grad=True)
+
+# Forward
+y = w * x**2 + 3*x - 1
+print("y =", y.item())
+
+# Backward
+y.backward()
+print(f"x.grad = {x.grad.item()}  (expected {2*w.item()*x.item() + 3})")
+print(f"w.grad = {w.grad.item()}  (expected {x.item()**2})")
+
+# Zero grads and compute again
+x.grad.zero_()
+w.grad.zero_()
+z = (w * x).sum()
+z.backward()
+print(f"\\nAfter z=w*x: x.grad={x.grad.item()}  w.grad={w.grad.item()}")
+
+# no_grad context
+with torch.no_grad():
+    val = w * x + 1
+print("\\nno_grad result requires_grad:", val.requires_grad)
+```""",
+    },
+    {
+        "id": "pt_linear_layer",
+        "title": "nn.Linear & Forward Pass",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Build and use a single linear layer.
+
+1. Import `torch.nn` and create `nn.Linear(in_features=4, out_features=2)`
+2. Create a batch of 8 random input vectors of size 4 (`torch.randn(8, 4)`)
+3. Run a forward pass and print the output shape
+4. Inspect `.weight` and `.bias` — print their shapes
+5. Count total trainable parameters in the layer
+6. Manually replicate the forward pass: `x @ weight.T + bias` and verify it matches `layer(x)`
+""",
+        "workspace_tip": (
+            "nn.Linear stores weight as (out, in), so the manual formula is x @ weight.T + bias. "
+            "Use sum(p.numel() for p in model.parameters()) to count params."
+        ),
+        "hint": """\
+```python
+import torch
+import torch.nn as nn
+
+layer = nn.Linear(4, 2)
+x = torch.randn(8, 4)
+out = layer(x)
+print(out.shape)       # (8, 2)
+print(layer.weight.shape)  # (2, 4)
+print(layer.bias.shape)    # (2,)
+```""",
+        "solution": """\
+```python
+import torch
+import torch.nn as nn
+
+torch.manual_seed(0)
+layer = nn.Linear(in_features=4, out_features=2)
+x = torch.randn(8, 4)
+
+out = layer(x)
+print("Output shape:", out.shape)
+print("Weight shape:", layer.weight.shape)
+print("Bias shape:  ", layer.bias.shape)
+
+n_params = sum(p.numel() for p in layer.parameters())
+print("Total params:", n_params)  # 4*2 + 2 = 10
+
+# Manual forward
+manual = x @ layer.weight.T + layer.bias
+print("\\nMax diff (manual vs layer):", (out - manual).abs().max().item())
+```""",
+    },
+    {
+        "id": "pt_mlp",
+        "title": "Build a Small MLP",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Define a small feedforward neural network using `nn.Module`.
+
+1. Subclass `nn.Module` and define a network with:
+   - Linear(16, 32) → ReLU → Linear(32, 16) → ReLU → Linear(16, 1)
+2. Implement `forward(self, x)`
+3. Instantiate the model and print it
+4. Count total parameters
+5. Run a forward pass with a batch of 4 samples of dimension 16
+6. Confirm the output shape is (4, 1)
+""",
+        "workspace_tip": (
+            "Define layers in __init__ and wire them in forward. "
+            "nn.Sequential is fine too. Use model.parameters() for param count."
+        ),
+        "hint": """\
+```python
+import torch
+import torch.nn as nn
+
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(16, 32), nn.ReLU(),
+            nn.Linear(32, 16), nn.ReLU(),
+            nn.Linear(16, 1),
+        )
+    def forward(self, x):
+        return self.net(x)
+```""",
+        "solution": """\
+```python
+import torch
+import torch.nn as nn
+
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(16, 32)
+        self.fc2 = nn.Linear(32, 16)
+        self.fc3 = nn.Linear(16, 1)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        return self.fc3(x)
+
+model = MLP()
+print(model)
+
+n_params = sum(p.numel() for p in model.parameters())
+print(f"\\nTotal parameters: {n_params}")
+
+x = torch.randn(4, 16)
+out = model(x)
+print("Output shape:", out.shape)   # (4, 1)
+```""",
+    },
+    {
+        "id": "pt_training_loop",
+        "title": "Training Loop (MSE Regression)",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Write a complete training loop for a simple regression problem.
+
+1. Generate synthetic data: `X = torch.randn(200, 1)`, `y = 3*X + 2 + 0.1*torch.randn(200, 1)`
+2. Define a `nn.Linear(1, 1)` model
+3. Use `nn.MSELoss()` and `torch.optim.SGD(model.parameters(), lr=0.05)`
+4. Train for 100 epochs; every 20 epochs print epoch and loss
+5. After training print the learned weight and bias — they should be close to 3 and 2
+6. Plot predicted vs actual with `matplotlib`
+""",
+        "workspace_tip": (
+            "Standard loop: zero_grad → forward → loss → backward → step. "
+            "Access learned values with model.weight.item() and model.bias.item()."
+        ),
+        "hint": """\
+```python
+optimizer.zero_grad()
+loss = criterion(model(X), y)
+loss.backward()
+optimizer.step()
+```""",
+        "solution": """\
+```python
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+
+torch.manual_seed(42)
+
+# Data
+X = torch.randn(200, 1)
+y = 3 * X + 2 + 0.1 * torch.randn(200, 1)
+
+# Model, loss, optimizer
+model     = nn.Linear(1, 1)
+criterion = nn.MSELoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.05)
+
+# Training loop
+for epoch in range(1, 101):
+    optimizer.zero_grad()
+    pred = model(X)
+    loss = criterion(pred, y)
+    loss.backward()
+    optimizer.step()
+    if epoch % 20 == 0:
+        print(f"Epoch {epoch:3d}  loss={loss.item():.4f}")
+
+w = model.weight.item()
+b = model.bias.item()
+print(f"\\nLearned: y = {w:.3f}*x + {b:.3f}  (true: 3.000*x + 2.000)")
+
+# Plot
+with torch.no_grad():
+    y_pred = model(X).numpy()
+plt.scatter(X.numpy(), y.numpy(), s=10, alpha=0.5, label="data")
+plt.plot(sorted(X.numpy()), [model(torch.tensor([[xi]])).item()
+         for xi in sorted(X.numpy().flatten())], color="red", label="fit")
+plt.legend()
+plt.title("Linear Regression with PyTorch")
+plt.show()
+```""",
+    },
+    {
+        "id": "pt_dataset_dataloader",
+        "title": "Dataset & DataLoader",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Build a custom Dataset and wrap it in a DataLoader.
+
+1. Create a custom `torch.utils.data.Dataset` that holds 100 (x, y) pairs where `y = 2*x` and x is drawn from `torch.randn(100)`
+2. Implement `__len__` and `__getitem__`
+3. Wrap it in a `DataLoader` with `batch_size=16` and `shuffle=True`
+4. Iterate over one epoch, printing the batch index and batch shapes
+5. Verify that the total number of samples seen equals 100
+""",
+        "workspace_tip": (
+            "torch.utils.data.Dataset requires __len__ and __getitem__. "
+            "DataLoader handles batching, shuffling, and parallel loading."
+        ),
+        "hint": """\
+```python
+from torch.utils.data import Dataset, DataLoader
+import torch
+
+class MyDS(Dataset):
+    def __init__(self):
+        self.x = torch.randn(100)
+        self.y = 2 * self.x
+    def __len__(self): return len(self.x)
+    def __getitem__(self, i): return self.x[i], self.y[i]
+```""",
+        "solution": """\
+```python
+import torch
+from torch.utils.data import Dataset, DataLoader
+
+torch.manual_seed(0)
+
+class LinearDataset(Dataset):
+    def __init__(self, n=100):
+        self.x = torch.randn(n, 1)
+        self.y = 2 * self.x
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, idx):
+        return self.x[idx], self.y[idx]
+
+ds     = LinearDataset()
+loader = DataLoader(ds, batch_size=16, shuffle=True)
+
+total = 0
+for i, (xb, yb) in enumerate(loader):
+    print(f"Batch {i}: x={xb.shape}  y={yb.shape}")
+    total += xb.shape[0]
+
+print(f"\\nTotal samples seen: {total}  (expected 100)")
+```""",
+    },
+    {
+        "id": "pt_conv2d",
+        "title": "Conv2d & Pooling",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Understand 2-D convolution and pooling.
+
+1. Create a random batch of 4 grayscale images: shape `(4, 1, 28, 28)`
+2. Apply `nn.Conv2d(in_channels=1, out_channels=8, kernel_size=3, padding=1)` and print output shape
+3. Apply `nn.ReLU()` then `nn.MaxPool2d(kernel_size=2)` — print shape after pooling
+4. Stack into a small CNN: Conv2d(1→8, 3, pad=1) → ReLU → MaxPool2d(2) → Conv2d(8→16, 3, pad=1) → ReLU → MaxPool2d(2) → flatten
+5. Print the flattened feature dimension — derive it analytically first, then confirm with code
+""",
+        "workspace_tip": (
+            "After two MaxPool2d(2) on a 28×28 input: 28→14→7. "
+            "Flattened = 16 * 7 * 7 = 784. Use x.view(x.size(0), -1) or nn.Flatten()."
+        ),
+        "hint": """\
+```python
+import torch
+import torch.nn as nn
+
+x = torch.randn(4, 1, 28, 28)
+conv = nn.Conv2d(1, 8, 3, padding=1)
+pool = nn.MaxPool2d(2)
+print(pool(torch.relu(conv(x))).shape)  # (4, 8, 14, 14)
+```""",
+        "solution": """\
+```python
+import torch
+import torch.nn as nn
+
+x = torch.randn(4, 1, 28, 28)
+
+conv1 = nn.Conv2d(1,  8, kernel_size=3, padding=1)
+conv2 = nn.Conv2d(8, 16, kernel_size=3, padding=1)
+pool  = nn.MaxPool2d(2)
+
+# Step-by-step
+out = pool(torch.relu(conv1(x)))
+print("After conv1+pool:", out.shape)   # (4, 8, 14, 14)
+out = pool(torch.relu(conv2(out)))
+print("After conv2+pool:", out.shape)   # (4, 16, 7, 7)
+
+flat = out.view(out.size(0), -1)
+print("Flattened:       ", flat.shape)  # (4, 784)
+
+# Compact version with Sequential
+cnn = nn.Sequential(
+    nn.Conv2d(1,  8, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+    nn.Conv2d(8, 16, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+    nn.Flatten(),
+)
+print("\\nSequential output:", cnn(x).shape)
+```""",
+    },
+    {
+        "id": "pt_save_load",
+        "title": "Save & Load Model Weights",
+        "bucket": "PyTorch",
+        "category": "PyTorch",
+        "prompt": """\
+**Task:** Practice saving and restoring model state.
+
+1. Define a small `nn.Sequential` model (Linear 4→8 → ReLU → Linear 8→1)
+2. Save its `state_dict` to a file `.streamlit/model.pt` using `torch.save`
+3. Create a fresh model of the same architecture with different (random) weights
+4. Load the saved weights into the fresh model with `load_state_dict`
+5. Verify the weights are identical by comparing `state_dict` tensors with `torch.allclose`
+6. Also show how to save/load the optimizer state (use `Adam`) so training can resume exactly
+""",
+        "workspace_tip": (
+            "Always save state_dict, not the whole model object — it's more portable. "
+            "torch.save({'model': ..., 'optimizer': ...}) is the standard checkpoint pattern."
+        ),
+        "hint": """\
+```python
+import torch, torch.nn as nn
+model = nn.Sequential(nn.Linear(4,8), nn.ReLU(), nn.Linear(8,1))
+torch.save(model.state_dict(), '.streamlit/model.pt')
+new_model = nn.Sequential(nn.Linear(4,8), nn.ReLU(), nn.Linear(8,1))
+new_model.load_state_dict(torch.load('.streamlit/model.pt', weights_only=True))
+```""",
+        "solution": """\
+```python
+from pathlib import Path
+import torch
+import torch.nn as nn
+
+def make_model():
+    return nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 1))
+
+# Original model
+torch.manual_seed(42)
+model = make_model()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+# Save checkpoint
+checkpoint = {
+    "model":     model.state_dict(),
+    "optimizer": optimizer.state_dict(),
+}
+ckpt_path = Path(".streamlit") / "model.pt"
+ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+torch.save(checkpoint, ckpt_path)
+print("Saved checkpoint.")
+
+# Fresh model — different random weights
+torch.manual_seed(99)
+new_model = make_model()
+new_opt   = torch.optim.Adam(new_model.parameters(), lr=1e-3)
+
+# Verify weights differ before loading
+sd_orig = model.state_dict()
+sd_new  = new_model.state_dict()
+print("Weights same before load?", all(torch.allclose(sd_orig[k], sd_new[k]) for k in sd_orig))
+
+# Load
+ckpt = torch.load(ckpt_path, weights_only=False)
+new_model.load_state_dict(ckpt["model"])
+new_opt.load_state_dict(ckpt["optimizer"])
+
+# Verify
+sd_loaded = new_model.state_dict()
+all_match = all(torch.allclose(sd_orig[k], sd_loaded[k]) for k in sd_orig)
+print("Weights same after load? ", all_match)  # True
+```""",
+    },
+]
+
+ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS + PYTORCH_QUESTIONS
 
 CATEGORY_ICON = {
     "ML/Statistics":    "🔵",
@@ -2831,6 +3443,7 @@ CATEGORY_ICON = {
     "Algorithms":       "⚙️",
     "Survival Analysis": "📈",
     "Integrated Drill": "🧩",
+    "PyTorch":          "🔥",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2911,7 +3524,7 @@ if not st.session_state.get("_progress_loaded", False):
             st.session_state[_k] = _v
 
     # Validate restored navigation state against current question bank.
-    _valid_buckets = {"Basic", "Bioinformatics Engineer", "Clinical", "Integrated"}
+    _valid_buckets = {"Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"}
     if st.session_state.active_bucket not in _valid_buckets:
         st.session_state.active_bucket = "Basic"
 
@@ -3133,15 +3746,16 @@ st.divider()
 # Bucket selector
 _bucket_choice = st.radio(
     "Bucket",
-    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated"],
+    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"],
     format_func=lambda b: {
         "Basic":    "🔵 Basic (ML / Python)",
         "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
         "Clinical": "🏥 Clinical DS",
         "Integrated": "🧩 Integrated Drills",
+        "PyTorch": "🔥 PyTorch",
     }[b],
     horizontal=True,
-    index=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated"].index(st.session_state.active_bucket),
+    index=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"].index(st.session_state.active_bucket),
     label_visibility="collapsed",
 )
 if _bucket_choice != st.session_state.active_bucket:

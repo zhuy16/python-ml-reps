@@ -56,3 +56,4 @@ site/
 # Local app/runtime artifacts
 .streamlit/
 *.bak
+model.pt
