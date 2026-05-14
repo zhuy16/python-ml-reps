@@ -2935,6 +2935,311 @@ with torch.no_grad():
 print("Sample probabilities:", sample_probs)
 ```
 """,
+    },
+    {
+        "id": "integrated_fastq_qc_pipeline",
+        "title": "Integrated FASTQ Pipeline: Parse -> QC -> Clean -> Summarize -> Plot",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+**Task:** Build one end-to-end FASTQ workflow that mirrors interview-style data wrangling.
+
+Use `data/sample.fastq` and complete all steps in one script:
+
+1. Parse FASTQ records with explicit 4-line logic
+2. Build a read-level table with columns like:
+   - `sample`, `read_id`, `length`, `n_bases`, `n_rate`, `mean_q`
+3. Apply cleaning filters (example: `length >= 45`, `n_rate <= 0.10`)
+4. Show EDA checks (raw vs clean counts, nulls, summary stats)
+5. Group by sample (retained reads, mean length, mean quality)
+6. Merge with sample metadata (`cohort`, `batch`) and summarize by cohort
+7. Plot at least two charts (length distribution and quality by sample)
+""",
+        "workspace_tip": (
+            "Use `while True` and parse each FASTQ record as exactly 4 lines. "
+            "Headers can include extra metadata after spaces (e.g., `sample=S01`), so parse sample with regex."
+        ),
+        "hint": """\
+```python
+import re
+
+rows = []
+with open("data/sample.fastq", "r", encoding="utf-8") as f:
+    while True:
+        h = f.readline().strip()
+        if not h:
+            break
+        seq = f.readline().strip()
+        plus = f.readline().strip()
+        qual = f.readline().strip()
+        if not h.startswith("@") or plus != "+" or len(seq) != len(qual):
+            continue
+        sample_match = re.search(r"sample=([A-Za-z0-9_-]+)", h)
+        sample = sample_match.group(1) if sample_match else "Unknown"
+        rows.append({
+            "sample": sample,
+            "read_id": h[1:].split()[0],
+            "length": len(seq),
+            "n_bases": seq.count("N"),
+            "n_rate": seq.count("N") / len(seq),
+            "mean_q": sum(ord(c) - 33 for c in qual) / len(qual),
+        })
+```
+""",
+        "solution": """\
+```python
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import re
+
+# 1) Parse FASTQ
+rows = []
+with open("data/sample.fastq", "r", encoding="utf-8") as f:
+    while True:
+        header = f.readline().strip()
+        if not header:
+            break
+        seq = f.readline().strip()
+        plus = f.readline().strip()
+        qual = f.readline().strip()
+
+        if not header.startswith("@") or plus != "+":
+            continue
+        if not seq or len(seq) != len(qual):
+            continue
+
+        sample_match = re.search(r"sample=([A-Za-z0-9_-]+)", header)
+        sample = sample_match.group(1) if sample_match else "Unknown"
+        read_id = header[1:].split()[0]
+        n_bases = seq.count("N")
+        mean_q = np.mean([ord(ch) - 33 for ch in qual])
+        rows.append(
+            {
+                "sample": sample,
+                "read_id": read_id,
+                "length": len(seq),
+                "n_bases": n_bases,
+                "n_rate": n_bases / len(seq),
+                "mean_q": mean_q,
+            }
+        )
+
+reads = pd.DataFrame(rows)
+
+# 2) Clean
+clean = reads[(reads["length"] >= 45) & (reads["n_rate"] <= 0.10)].copy()
+
+# 3) EDA
+print("Raw reads:", len(reads))
+print("Clean reads:", len(clean))
+print("\nNulls:\n", clean.isna().sum())
+print("\nSummary:\n", clean[["length", "n_bases", "n_rate", "mean_q"]].describe().round(3))
+
+# 4) GroupBy
+sample_summary = clean.groupby("sample").agg(
+    retained_reads=("read_id", "size"),
+    mean_length=("length", "mean"),
+    mean_q=("mean_q", "mean"),
+    mean_n_rate=("n_rate", "mean"),
+).round(3).reset_index()
+print("\nPer-sample summary:\n", sample_summary)
+
+# 5) Merge metadata
+meta = pd.DataFrame(
+    {
+        "sample": ["S01", "S02", "S03", "S04"],
+        "cohort": ["Lung", "Lung", "Breast", "Melanoma"],
+        "batch": ["B1", "B1", "B2", "B2"],
+    }
+)
+merged = sample_summary.merge(meta, on="sample", how="left")
+cohort_summary = merged.groupby("cohort").agg(
+    samples=("sample", "nunique"),
+    total_reads=("retained_reads", "sum"),
+    mean_q=("mean_q", "mean"),
+).round(3)
+print("\nCohort summary:\n", cohort_summary)
+
+# 6) Plot
+sns.set_theme(style="whitegrid")
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+sns.histplot(clean["length"], bins=10, kde=True, ax=axes[0], color="#2C7FB8")
+axes[0].set_title("Read Length Distribution")
+
+sns.boxplot(data=clean, x="sample", y="mean_q", ax=axes[1], palette="Set2")
+axes[1].set_title("Mean Quality by Sample")
+
+plt.tight_layout()
+plt.show()
+```
+""",
+    },
+    {
+        "id": "integrated_bed_interval_pipeline",
+        "title": "Integrated BED Pipeline: Parse -> Normalize -> Coverage -> Overlap -> Plot",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+**Task:** Build one end-to-end BED interval analysis workflow.
+
+Use `data/sample.bed` and do all steps in one script:
+
+The BED file includes multi-line header/comment rows (`track`, `browser`, `# ...`) that you must skip manually.
+
+1. Parse BED into `chrom`, `start`, `end`, `feature`, `score`, `sample`
+2. Convert numeric fields and clean invalid intervals (`end <= start`, negative start)
+3. Compute `length = end - start`
+4. EDA: shape, dtypes, nulls, interval-length summary
+5. GroupBy summaries by sample and by chromosome
+6. Merge chromosome coverage with chromosome-size metadata and compute `% covered`
+7. Add overlap analysis against hotspot windows
+8. Plot coverage by chromosome + length distribution
+""",
+        "workspace_tip": (
+            "Do not use `pd.read_csv` for this drill. Parse line by line, skip `track`/`browser`/`#` rows, split with `\\t`; "
+            "interval overlap condition is `(start < hs_end) & (end > hs_start)`."
+        ),
+        "hint": """\
+```python
+rows = []
+with open("data/sample.bed", "r", encoding="utf-8") as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith(("track", "browser", "#")):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+        rows.append(
+            {
+                "chrom": parts[0],
+                "start": parts[1],
+                "end": parts[2],
+                "feature": parts[3],
+                "score": parts[4],
+                "sample": parts[5],
+            }
+        )
+
+bed = pd.DataFrame(rows)
+bed["start"] = pd.to_numeric(bed["start"], errors="coerce")
+bed["end"] = pd.to_numeric(bed["end"], errors="coerce")
+bed["score"] = pd.to_numeric(bed["score"], errors="coerce")
+bed = bed[(bed["start"] >= 0) & (bed["end"] > bed["start"])].copy()
+bed["length"] = bed["end"] - bed["start"]
+```
+""",
+        "solution": """\
+```python
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# 1) Parse line by line (skip BED header/comment rows)
+rows = []
+with open("data/sample.bed", "r", encoding="utf-8") as f:
+    for raw in f:
+        line = raw.strip()
+        if not line or line.startswith(("track", "browser", "#")):
+            continue
+
+        parts = line.split("\t")
+        if len(parts) < 6:
+            continue
+
+        rows.append(
+            {
+                "chrom": parts[0],
+                "start": parts[1],
+                "end": parts[2],
+                "feature": parts[3],
+                "score": parts[4],
+                "sample": parts[5],
+            }
+        )
+
+bed = pd.DataFrame(rows)
+bed["start"] = pd.to_numeric(bed["start"], errors="coerce")
+bed["end"] = pd.to_numeric(bed["end"], errors="coerce")
+bed["score"] = pd.to_numeric(bed["score"], errors="coerce")
+
+# 2) Clean + feature engineering
+bed = bed[(bed["start"] >= 0) & (bed["end"] > bed["start"])].copy()
+bed["length"] = bed["end"] - bed["start"]
+
+# 3) EDA
+print("Shape:", bed.shape)
+print("\nDtypes:\n", bed.dtypes)
+print("\nNull counts:\n", bed.isna().sum())
+print("\nLength summary:\n", bed["length"].describe().round(2))
+
+# 4) GroupBy summaries
+sample_summary = bed.groupby("sample").agg(
+    n_intervals=("feature", "size"),
+    covered_bases=("length", "sum"),
+    median_len=("length", "median"),
+    mean_score=("score", "mean"),
+).round(3).reset_index()
+chrom_cov = bed.groupby("chrom", as_index=False).agg(
+    covered_bases=("length", "sum"),
+    n_intervals=("feature", "size"),
+)
+print("\nSample summary:\n", sample_summary)
+print("\nChromosome coverage:\n", chrom_cov)
+
+# 5) Merge chromosome metadata
+chrom_sizes = pd.DataFrame(
+    {
+        "chrom": ["chr1", "chr2", "chr7", "chr12", "chr17"],
+        "chrom_size": [248_956_422, 242_193_529, 159_345_973, 133_275_309, 83_257_441],
+    }
+)
+chrom_merged = chrom_cov.merge(chrom_sizes, on="chrom", how="left")
+chrom_merged["pct_covered"] = 100 * chrom_merged["covered_bases"] / chrom_merged["chrom_size"]
+print("\nCoverage with chromosome size:\n", chrom_merged.round(6))
+
+# 6) Overlap with hotspots
+hotspots = pd.DataFrame(
+    {
+        "chrom": ["chr1", "chr2", "chr7", "chr17"],
+        "hs_start": [100_000, 200_000, 300_000, 400_000],
+        "hs_end": [130_000, 230_000, 330_000, 430_000],
+        "hotspot": ["HS1", "HS2", "HS3", "HS4"],
+    }
+)
+overlap = bed.merge(hotspots, on="chrom", how="inner")
+overlap = overlap[(overlap["start"] < overlap["hs_end"]) & (overlap["end"] > overlap["hs_start"])].copy()
+overlap["overlap_bp"] = np.minimum(overlap["end"], overlap["hs_end"]) - np.maximum(overlap["start"], overlap["hs_start"])
+overlap_summary = overlap.groupby(["sample", "hotspot"], as_index=False).agg(
+    n_hits=("feature", "size"),
+    overlap_bp=("overlap_bp", "sum"),
+)
+print("\nHotspot overlap summary:\n", overlap_summary)
+
+# 7) Plots
+sns.set_theme(style="whitegrid")
+fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+sns.barplot(
+    data=chrom_merged.sort_values("covered_bases", ascending=False),
+    x="chrom",
+    y="covered_bases",
+    ax=axes[0],
+    palette="Blues_d",
+)
+axes[0].set_title("Covered Bases by Chromosome")
+
+sns.histplot(bed["length"], bins=12, kde=True, ax=axes[1], color="#7FC97F")
+axes[1].set_title("Interval Length Distribution")
+
+plt.tight_layout()
+plt.show()
+```
+""",
     }
 ]
 
@@ -3455,6 +3760,7 @@ _defaults = {
     "show_hint":     False,
     "show_solution": False,
     "difficulties":  {},   # q_id → "easy" | "hard"
+    "bad_questions": {},   # q_id → bool (hidden as bad practice)
     "miss_counts":   {},   # q_id → int
     "hard_only":     False,
     "hide_left_panel": False,
@@ -3472,6 +3778,9 @@ _defaults = {
     "run_output":    "",
     "run_error":     "",
     "run_figures":   [],
+    "error_explanation": "",  # LLM explanation of last error
+    "claude_question": "",    # General question to Claude
+    "claude_response": "",    # Claude's response
 }
 for _k, _v in _defaults.items():
     if _k not in st.session_state:
@@ -3485,6 +3794,7 @@ _PERSIST_KEYS = [
     "notes",
     "editor_mode",
     "difficulties",
+    "bad_questions",
     "miss_counts",
     "custom_solutions",
     "hide_left_panel",
@@ -3528,14 +3838,20 @@ if not st.session_state.get("_progress_loaded", False):
     if st.session_state.active_bucket not in _valid_buckets:
         st.session_state.active_bucket = "Basic"
 
-    _all_ids = {q["id"] for q in ALL_QUESTIONS}
+    _all_ids = {
+        q["id"] for q in ALL_QUESTIONS
+        if not st.session_state.bad_questions.get(q["id"], False)
+    }
     if st.session_state.current_q_id not in _all_ids:
         _bucket_qs = [
             q for q in ALL_QUESTIONS
             if q.get("bucket", "Basic") == st.session_state.active_bucket
+            and not st.session_state.bad_questions.get(q["id"], False)
         ]
         if _bucket_qs:
             st.session_state.current_q_id = _bucket_qs[0]["id"]
+        else:
+            st.session_state.current_q_id = None
 
     st.session_state._progress_loaded = True
 
@@ -3544,7 +3860,11 @@ if not st.session_state.get("_progress_loaded", False):
 # ──────────────────────────────────────────────────────────────────────────────
 def _active_questions() -> list[dict]:
     bucket = st.session_state.active_bucket
-    return [q for q in ALL_QUESTIONS if q.get("bucket", "Basic") == bucket]
+    return [
+        q for q in ALL_QUESTIONS
+        if q.get("bucket", "Basic") == bucket
+        and not st.session_state.bad_questions.get(q["id"], False)
+    ]
 
 
 def _pool() -> list[str]:
@@ -3556,8 +3876,15 @@ def _pool() -> list[str]:
     return [q["id"] for q in qs]
 
 
-def _current() -> dict:
-    return next(q for q in ALL_QUESTIONS if q["id"] == st.session_state.current_q_id)
+def _current() -> dict | None:
+    qs = _active_questions()
+    for q in qs:
+        if q["id"] == st.session_state.current_q_id:
+            return q
+    if qs:
+        st.session_state.current_q_id = qs[0]["id"]
+        return qs[0]
+    return None
 
 
 def _go_next():
@@ -3714,6 +4041,49 @@ def _elapsed() -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _active_llm_model() -> str:
+    import os
+
+    return st.secrets.get("LLM_MODEL", os.environ.get("LLM_MODEL", "claude-haiku-4-5"))
+
+
+def _explain_error_with_llm(code: str, error: str) -> str:
+    """Send code + traceback to Claude and return an explanation."""
+    try:
+        import anthropic
+        import os
+
+        api_key = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+        model = _active_llm_model()
+
+        if not api_key:
+            return (
+                "**No API key found.**  "
+                "Set the `ANTHROPIC_API_KEY` environment variable before starting the app, e.g.:\n"
+                "```\nANTHROPIC_API_KEY=sk-ant-... streamlit run apps/streamlit_app.py\n```"
+            )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        prompt = (
+            "You are a Python tutor. A student ran the following code and got an error.\n"
+            "Explain in 3–5 bullet points:\n"
+            "1. What the error means\n"
+            "2. Which line caused it and why\n"
+            "3. How to fix it\n"
+            "Be concise and beginner-friendly. Do NOT rewrite the whole solution.\n\n"
+            f"--- CODE ---\n{code.strip()}\n\n"
+            f"--- TRACEBACK ---\n{error.strip()}"
+        )
+        resp = client.messages.create(
+            model=model,
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as exc:
+        return f"Could not reach Claude: {exc}"
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # HEADER
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3760,7 +4130,8 @@ _bucket_choice = st.radio(
 )
 if _bucket_choice != st.session_state.active_bucket:
     st.session_state.active_bucket = _bucket_choice
-    st.session_state.current_q_id  = _active_questions()[0]["id"]
+    _new_bucket_qs = _active_questions()
+    st.session_state.current_q_id = _new_bucket_qs[0]["id"] if _new_bucket_qs else None
     st.session_state.show_hint     = False
     st.session_state.show_solution = False
     st.session_state.run_output    = ""
@@ -3813,6 +4184,21 @@ with _ui6:
     st.caption("Customize layout.")
 
 q = _current()
+
+if q is None:
+    st.warning("No exercises are available in this bucket. You may have marked all of them as bad.")
+    _c1, _c2 = st.columns([1, 1])
+    with _c1:
+        if st.button("Restore all hidden exercises", use_container_width=True):
+            st.session_state.bad_questions = {}
+            _bucket_qs = _active_questions()
+            st.session_state.current_q_id = _bucket_qs[0]["id"] if _bucket_qs else None
+            st.rerun()
+    with _c2:
+        st.caption("Switch bucket above to continue practicing without restoring.")
+
+    _save_progress_to_disk()
+    st.stop()
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN LAYOUT  ·  LEFT · CENTER · RIGHT
@@ -3949,7 +4335,7 @@ with center:
             st.session_state.run_figures = []
             st.rerun()
 
-    _pc1, _pc2, _pc3, _pc4, _pc5 = st.columns([2, 2, 1.5, 1.5, 2])
+    _pc1, _pc2, _pc3, _pc4, _pc5, _pc6 = st.columns([2, 2, 1.3, 1.3, 1.6, 2])
     with _pc1:
         if st.button(
             "⭐ Use My Code as Solution",
@@ -3988,6 +4374,22 @@ with center:
             )
             st.rerun()
     with _pc5:
+        if st.button(
+            "🚫 Bad Practice",
+            use_container_width=True,
+            type="secondary",
+            help="Hide this exercise from your list on future reloads.",
+        ):
+            st.session_state.bad_questions[q["id"]] = True
+            _next_qs = _active_questions()
+            st.session_state.current_q_id = _next_qs[0]["id"] if _next_qs else None
+            st.session_state.show_hint = False
+            st.session_state.show_solution = False
+            st.session_state.run_output = ""
+            st.session_state.run_error = ""
+            st.session_state.run_figures = []
+            st.rerun()
+    with _pc6:
         if _invalid_custom_solution:
             st.caption("Invalid saved custom solution was detected and replaced with original.")
         else:
@@ -4036,7 +4438,7 @@ with center:
                 clickToggle();
                 return;
             }
-            if (e.shiftKey && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+        if (e.shiftKey && e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 clickRun();
@@ -4171,6 +4573,17 @@ if right is not None:
             with _out_container:
                 st.error("**Runtime error:**")
                 st.code(st.session_state.run_error, language="python")
+                if st.button("🤖 Explain this error", key="explain_error_btn", use_container_width=True):
+                    with st.spinner("Asking LLM..."):
+                        _last_code = st.session_state.last_run_code.get(
+                            st.session_state.current_q_id, ""
+                        )
+                        st.session_state.error_explanation = _explain_error_with_llm(
+                            _last_code, st.session_state.run_error
+                        )
+                if st.session_state.error_explanation:
+                    st.markdown("**💡 LLM explanation:**")
+                    st.markdown(st.session_state.error_explanation)
         elif st.session_state.run_output or st.session_state.run_figures:
             _out_container = st.container(height=int(st.session_state.editor_height))
             with _out_container:
@@ -4181,6 +4594,22 @@ if right is not None:
                     st.pyplot(fig)
         else:
             st.caption("▶ Run your code — output appears here.")
+        
+        # ── Ask Claude (general Q&A) ──────────────────────────────────────
+        with st.expander("💬 Ask Claude", expanded=False):
+            st.caption("Enter sends your question.")
+            st.caption(f"Active model: `{_active_llm_model()}`")
+            _q = st.chat_input("Ask a Python or bioinformatics question:", key="claude_question_input")
+            if _q and _q.strip():
+                st.session_state.claude_question = _q
+                with st.spinner("Asking Claude..."):
+                    st.session_state.claude_response = _explain_error_with_llm(
+                        code="(general question, no code)",
+                        error=_q
+                    )
+            if st.session_state.claude_response:
+                st.markdown("**Claude's response:**")
+                st.markdown(st.session_state.claude_response)
 
 # Persist progress at the end of each rerun.
 _save_progress_to_disk()

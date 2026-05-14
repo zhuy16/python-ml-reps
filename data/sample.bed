@@ -1,0 +1,26 @@
+track name="ATAC_peaks" description="Synthetic peak calls across samples" visibility=2
+browser position chr7:299000-332000
+# source=mock_peak_caller_v1.3
+# columns=chrom,start,end,feature,score,sample
+chr1	99000	101200	peak_001	12	S01
+chr1	101500	103800	peak_002	18	S02
+chr1	129000	131000	peak_003	9	S03
+chr2	198500	201000	peak_004	20	S01
+chr2	205000	208000	peak_005	25	S02
+chr2	228500	232200	peak_006	15	S04
+chr7	299200	302100	peak_007	22	S03
+chr7	306000	309000	peak_008	17	S01
+chr7	328800	331500	peak_009	14	S04
+chr12	49900	54000	peak_010	11	S02
+chr12	70000	76000	peak_011	8	S03
+chr12	90000	96500	peak_012	13	S04
+chr17	398800	401100	peak_013	19	S01
+chr17	404000	408300	peak_014	21	S02
+chr17	428000	431200	peak_015	16	S03
+# intentionally malformed/invalid rows for cleaning drills
+chr1	-50	120	bad_neg_start	5	S04
+chr2	450000	449000	bad_inverted	7	S02
+chr7	510000	514500	peak_016	10	S01
+chr12	130000	133200	peak_017	12	S03
+chr17	600000	605000	peak_018	18	S04
+chr5	220000	223000	peak_missing_sample	11
