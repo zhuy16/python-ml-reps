@@ -1,5 +1,6 @@
 import difflib
 import json
+import os
 import random
 import re
 import time
@@ -3240,7 +3241,252 @@ plt.tight_layout()
 plt.show()
 ```
 """,
-    }
+    },
+    {
+        "id": "pytorch_integrated_drill",
+        "title": "PyTorch End-to-End Drill",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+**Task:** Build and train a complete PyTorch pipeline from scratch in one script.
+
+Cover every step in order:
+
+1. **Data** — generate a synthetic binary classification dataset (e.g. 1 000 samples, 10 features) using `sklearn.datasets.make_classification`; convert to `torch.FloatTensor`; wrap in `TensorDataset` + `DataLoader` (batch size 32, shuffle train)
+2. **Model** — define an MLP with `nn.Sequential`: Linear(10→32) → ReLU → Linear(32→16) → ReLU → Linear(16→1)
+3. **Loss & optimiser** — use `nn.BCEWithLogitsLoss` and `torch.optim.Adam(lr=1e-3)`
+4. **Training loop** — 20 epochs; for each batch: `zero_grad → forward → loss → backward → step`; print epoch loss every 5 epochs
+5. **Evaluation** — switch to `model.eval()` + `torch.no_grad()`; compute sigmoid probabilities on the test set; threshold at 0.5 for predictions; print accuracy and ROC-AUC
+6. **Save & reload** — save `model.state_dict()` to `mlp_weights.pt`; create a fresh model, load the weights, verify predictions match
+""",
+        "workspace_tip": (
+            "Key sequence: make_classification → tensor → TensorDataset → DataLoader → "
+            "nn.Sequential → BCEWithLogitsLoss → Adam → train loop → eval + no_grad → "
+            "roc_auc_score → torch.save / torch.load."
+        ),
+        "hint": """\
+```python
+import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import roc_auc_score
+
+X, y = make_classification(n_samples=1000, n_features=10, random_state=42)
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+
+X_tr_t = torch.FloatTensor(X_tr)
+y_tr_t = torch.FloatTensor(y_tr).unsqueeze(1)
+X_te_t = torch.FloatTensor(X_te)
+y_te_t = torch.FloatTensor(y_te).unsqueeze(1)
+
+loader = DataLoader(TensorDataset(X_tr_t, y_tr_t), batch_size=32, shuffle=True)
+
+model = nn.Sequential(
+    nn.Linear(10, 32), nn.ReLU(),
+    nn.Linear(32, 16), nn.ReLU(),
+    nn.Linear(16, 1),
+)
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+```""",
+        "solution": """\
+```python
+import torch
+from torch import nn
+from torch.utils.data import TensorDataset, DataLoader
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, roc_auc_score
+
+# ── 1. Data ────────────────────────────────────────────────────────────────────
+X, y = make_classification(n_samples=1000, n_features=10, random_state=42)
+X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
+
+X_tr_t = torch.FloatTensor(X_tr)
+y_tr_t = torch.FloatTensor(y_tr).unsqueeze(1)
+X_te_t = torch.FloatTensor(X_te)
+y_te_t = torch.FloatTensor(y_te).unsqueeze(1)
+
+train_loader = DataLoader(TensorDataset(X_tr_t, y_tr_t), batch_size=32, shuffle=True)
+
+# ── 2. Model ───────────────────────────────────────────────────────────────────
+def make_model():
+    return nn.Sequential(
+        nn.Linear(10, 32), nn.ReLU(),
+        nn.Linear(32, 16), nn.ReLU(),
+        nn.Linear(16, 1),
+    )
+
+model = make_model()
+
+# ── 3. Loss & optimiser ────────────────────────────────────────────────────────
+criterion = nn.BCEWithLogitsLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+# ── 4. Training loop ───────────────────────────────────────────────────────────
+model.train()
+for epoch in range(1, 21):
+    epoch_loss = 0.0
+    for xb, yb in train_loader:
+        optimizer.zero_grad()
+        logits = model(xb)
+        loss = criterion(logits, yb)
+        loss.backward()
+        optimizer.step()
+        epoch_loss += loss.item() * len(xb)
+    if epoch % 5 == 0:
+        print(f"Epoch {epoch:2d}  loss={epoch_loss / len(X_tr):.4f}")
+
+# ── 5. Evaluation ──────────────────────────────────────────────────────────────
+model.eval()
+with torch.no_grad():
+    logits_te = model(X_te_t)
+    probs = torch.sigmoid(logits_te).squeeze().numpy()
+    preds = (probs >= 0.5).astype(int)
+
+acc = accuracy_score(y_te, preds)
+auc = roc_auc_score(y_te, probs)
+print(f"\\nTest accuracy: {acc:.3f}  ROC-AUC: {auc:.3f}")
+
+# ── 6. Save & reload ───────────────────────────────────────────────────────────
+ckpt_path = "mlp_weights.pt"
+torch.save(model.state_dict(), ckpt_path)
+
+model2 = make_model()
+model2.load_state_dict(torch.load(ckpt_path, weights_only=True))
+model2.eval()
+with torch.no_grad():
+    probs2 = torch.sigmoid(model2(X_te_t)).squeeze().numpy()
+
+print(f"Predictions match after reload: {(probs == probs2).all()}")
+```""",
+    },
+    {
+        "id": "langchain_integrated_drill",
+        "title": "LangChain / LangGraph End-to-End Drill",
+        "category": "Integrated Drill",
+        "bucket": "Integrated",
+        "prompt": """\
+**Task:** Build a complete agentic RAG pipeline in one script using LangChain + LangGraph.
+
+Cover every step in order:
+
+1. **Documents & embeddings** — create 6 short ML-concept strings; embed with `HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")` (local, no API key); store in `FAISS.from_texts`
+2. **Retriever tool** — wrap retriever with `create_retriever_tool`; also define `@tool word_count(text: str) -> int`
+3. **LLM with tools** — `ChatAnthropic(model="claude-haiku-4-5", max_tokens=200).bind_tools([retriever_tool, word_count])`
+4. **LangGraph agent** — `MessagesState` graph: `agent` node + `tools` node (`ToolNode`); `tools_condition` routing; loop `tools → agent`
+5. **Structured output** — pipe final message through `llm.with_structured_output(AgentAnswer)` to extract `answer` and `source_concept`
+6. **Run** — ask `"How does regularisation prevent overfitting? Count words in your answer."` and print the structured result
+""",
+        "workspace_tip": (
+            "Sequence: HuggingFaceEmbeddings → FAISS → create_retriever_tool + @tool → "
+            "ChatAnthropic.bind_tools → StateGraph(MessagesState) → ToolNode → "
+            "tools_condition → compile → invoke → with_structured_output."
+        ),
+        "hint": """\
+```python
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain.tools.retriever import create_retriever_tool
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph, MessagesState, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+docs = [...]  # 6 ML concept strings
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+vs = FAISS.from_texts(docs, embeddings)
+retriever_tool = create_retriever_tool(
+    vs.as_retriever(search_kwargs={"k": 2}),
+    "ml_concepts", "Search ML concept definitions",
+)
+
+@tool
+def word_count(text: str) -> int:
+    '''Count words in text.'''
+    return len(text.split())
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200).bind_tools(
+    [retriever_tool, word_count]
+)
+```""",
+        "solution": """\
+```python
+from pydantic import BaseModel, Field
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain.tools.retriever import create_retriever_tool
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph, MessagesState, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+# ── 1. Documents & embeddings ──────────────────────────────────────────────────
+docs = [
+    "Gradient descent minimises the loss by updating weights opposite to the gradient.",
+    "Overfitting occurs when a model memorises training data but fails on unseen examples.",
+    "Regularisation (L1/L2) penalises large weights to reduce overfitting.",
+    "Cross-validation estimates model performance by splitting data into k folds.",
+    "The learning rate controls the step size in gradient descent optimisation.",
+    "Dropout randomly zeros activations during training to prevent co-adaptation.",
+]
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+vectorstore = FAISS.from_texts(docs, embeddings)
+
+# ── 2. Tools ───────────────────────────────────────────────────────────────────
+retriever_tool = create_retriever_tool(
+    vectorstore.as_retriever(search_kwargs={"k": 2}),
+    name="ml_concepts",
+    description="Search ML concept definitions.",
+)
+
+@tool
+def word_count(text: str) -> int:
+    '''Count the number of words in the provided text.'''
+    return len(text.split())
+
+# ── 3. LLM with tools ─────────────────────────────────────────────────────────
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200).bind_tools(
+    [retriever_tool, word_count]
+)
+
+# ── 4. LangGraph agent ────────────────────────────────────────────────────────
+def agent_node(state: MessagesState):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("agent", agent_node)
+graph.add_node("tools", ToolNode([retriever_tool, word_count]))
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", tools_condition)
+graph.add_edge("tools", "agent")
+app = graph.compile()
+
+question = "How does regularisation prevent overfitting? Count words in your answer."
+result = app.invoke({"messages": [HumanMessage(content=question)]})
+final_text = result["messages"][-1].content
+
+# ── 5. Structured output ──────────────────────────────────────────────────────
+class AgentAnswer(BaseModel):
+    answer: str = Field(description="The agent's answer")
+    source_concept: str = Field(description="The main ML concept addressed")
+
+structured_llm = ChatAnthropic(
+    model="claude-haiku-4-5", max_tokens=200
+).with_structured_output(AgentAnswer)
+structured = structured_llm.invoke(
+    f"Extract the answer and main ML concept from:\\n{final_text}"
+)
+
+# ── 6. Print ───────────────────────────────────────────────────────────────────
+print(f"Answer:         {structured.answer}")
+print(f"Source concept: {structured.source_concept}")
+```""",
+    },
 ]
 
 PYTORCH_QUESTIONS = [
@@ -3736,7 +3982,567 @@ print("Weights same after load? ", all_match)  # True
     },
 ]
 
-ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS + PYTORCH_QUESTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+# LANGCHAIN / LANGGRAPH QUESTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+LANGCHAIN_QUESTIONS = [
+    {
+        "id": "lc_prompt_template",
+        "title": "Chat Prompt Template",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Build and invoke a `ChatPromptTemplate` with a system + human message.
+
+1. Import `ChatPromptTemplate` from `langchain_core.prompts`
+2. Create a template with a `{system}` system message and a `{question}` human message
+3. Import `ChatAnthropic` from `langchain_anthropic`; create `llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)`
+4. Chain them with LCEL: `chain = prompt | llm`
+5. Invoke with `system="You are a concise data scientist."` and `question="What is overfitting in 2 sentences?"`
+6. Print `response.content`
+""",
+        "workspace_tip": (
+            "Use pipe `|` for LCEL chaining. `response.content` gives the string. "
+            "ANTHROPIC_API_KEY is read from the environment automatically by ChatAnthropic."
+        ),
+        "hint": """\
+```python
+import os
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_anthropic import ChatAnthropic
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "{system}"),
+    ("human", "{question}"),
+])
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)
+chain = prompt | llm
+response = chain.invoke({
+    "system": "You are a concise data scientist.",
+    "question": "What is overfitting in 2 sentences?",
+})
+print(response.content)
+```""",
+        "solution": """\
+```python
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_anthropic import ChatAnthropic
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "{system}"),
+    ("human", "{question}"),
+])
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)
+
+chain = prompt | llm
+
+response = chain.invoke({
+    "system": "You are a concise, helpful data scientist.",
+    "question": "What is overfitting in 2 sentences?",
+})
+
+print(response.content)
+```""",
+    },
+    {
+        "id": "lc_output_parser",
+        "title": "Output Parsers",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Use output parsers to get structured data from an LLM.
+
+1. Use `StrOutputParser` to get a plain string from a simple chain with `ChatAnthropic`
+2. Define a Pydantic model `MLConcept` with fields: `name: str`, `definition: str`, `example: str = ""`
+3. Use `llm.with_structured_output(MLConcept)` to get a structured response
+4. Ask the LLM to explain "regularization" (include name, definition, and example) and print the structured fields
+""",
+        "workspace_tip": (
+            "`with_structured_output` works with Claude too. "
+            "Import `BaseModel, Field` from `pydantic`. Use `ChatAnthropic(model='claude-haiku-4-5', max_tokens=200)`."
+        ),
+        "hint": """\
+```python
+from pydantic import BaseModel, Field
+from langchain_anthropic import ChatAnthropic
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+class MLConcept(BaseModel):
+    name: str
+    definition: str = Field(description="one-sentence definition")
+    example: str = Field(default="", description="concrete example")
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200)
+structured_llm = llm.with_structured_output(MLConcept)
+```""",
+        "solution": """\
+```python
+from pydantic import BaseModel, Field
+from langchain_anthropic import ChatAnthropic
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200)
+
+# 1. StrOutputParser — plain string
+str_chain = (
+    ChatPromptTemplate.from_messages([("human", "Define {concept} in one sentence.")])
+    | llm
+    | StrOutputParser()
+)
+result = str_chain.invoke({"concept": "regularization"})
+print("String output:", result)
+
+# 2. Structured output via Pydantic
+class MLConcept(BaseModel):
+    name: str
+    definition: str = Field(description="one-sentence definition")
+    example: str = Field(default="", description="concrete Python or math example")
+
+structured_llm = llm.with_structured_output(MLConcept)
+concept = structured_llm.invoke(
+    "Explain regularization in ML. Provide: name, definition, and example."
+)
+print(f"\\nName: {concept.name}")
+print(f"Definition: {concept.definition}")
+print(f"Example: {concept.example}")
+```""",
+    },
+    {
+        "id": "lc_rag_basic",
+        "title": "RAG — Embed & Retrieve",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Build a minimal RAG (Retrieval-Augmented Generation) pipeline using local embeddings.
+
+1. Create a list of 5 short text documents (strings) about ML concepts
+2. Import `HuggingFaceEmbeddings` from `langchain_huggingface` (model `"all-MiniLM-L6-v2"` — runs locally, no API key)
+3. Import `FAISS` from `langchain_community.vectorstores`
+4. Build: `vectorstore = FAISS.from_texts(docs, embeddings)`
+5. Create a retriever: `retriever = vectorstore.as_retriever(search_kwargs={"k": 2})`
+6. Retrieve top-2 docs for `"what is gradient descent?"` and print their content
+""",
+        "workspace_tip": (
+            "`HuggingFaceEmbeddings` downloads `all-MiniLM-L6-v2` (~90 MB) on first use "
+            "and caches it locally — no API key needed. FAISS does similarity search in memory."
+        ),
+        "hint": """\
+```python
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+
+docs = [
+    "Gradient descent minimises the loss by updating weights in the negative gradient direction.",
+    "Overfitting occurs when a model memorises training data but fails on unseen data.",
+    "Regularisation (L1/L2) penalises large weights to reduce overfitting.",
+    "Cross-validation estimates model performance by splitting data into k folds.",
+    "The learning rate controls the step size in gradient descent optimisation.",
+]
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+vectorstore = FAISS.from_texts(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+results = retriever.invoke("what is gradient descent?")
+```""",
+        "solution": """\
+```python
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+
+docs = [
+    "Gradient descent minimises the loss by updating weights in the negative gradient direction.",
+    "Overfitting occurs when a model memorises training data but fails on unseen data.",
+    "Regularisation (L1/L2) penalises large weights to reduce overfitting.",
+    "Cross-validation estimates model performance by splitting data into k folds.",
+    "The learning rate controls the step size in gradient descent optimisation.",
+]
+
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+vectorstore = FAISS.from_texts(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+results = retriever.invoke("what is gradient descent?")
+for i, doc in enumerate(results, 1):
+    print(f"Result {i}: {doc.page_content}")
+```""",
+    },
+    {
+        "id": "lc_rag_chain",
+        "title": "RAG — Full QA Chain",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Build a complete RAG QA chain using LCEL with local embeddings + Claude.
+
+1. Build a FAISS vector store from 5 ML-concept strings using `HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")`
+2. Create a retriever with `k=2`
+3. Build a prompt: system = "Answer concisely using only the context.", human = "Context: {context}\\n\\nQuestion: {question}"
+4. Use `ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)` as the LLM
+5. Assemble the LCEL chain: `{"context": retriever | format_docs, "question": RunnablePassthrough()} | prompt | llm | StrOutputParser()`
+6. Ask `"How does regularisation prevent overfitting?"` and print the answer
+""",
+        "workspace_tip": (
+            "`format_docs` joins `doc.page_content` with newlines. "
+            "`RunnablePassthrough()` passes the question string straight through unchanged."
+        ),
+        "hint": """\
+```python
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+
+def format_docs(docs):
+    return "\\n".join(d.page_content for d in docs)
+
+rag_chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+answer = rag_chain.invoke("How does regularisation prevent overfitting?")
+print(answer)
+```""",
+        "solution": """\
+```python
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_anthropic import ChatAnthropic
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
+
+docs = [
+    "Gradient descent minimises the loss by updating weights in the negative gradient direction.",
+    "Overfitting occurs when a model memorises training data but fails on unseen data.",
+    "Regularisation (L1/L2) penalises large weights to reduce overfitting.",
+    "Cross-validation estimates model performance by splitting data into k folds.",
+    "The learning rate controls the step size in gradient descent optimisation.",
+]
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+vectorstore = FAISS.from_texts(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer concisely using only the context provided."),
+    ("human", "Context:\\n{context}\\n\\nQuestion: {question}"),
+])
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)
+
+def format_docs(docs):
+    return "\\n".join(d.page_content for d in docs)
+
+rag_chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+answer = rag_chain.invoke("How does regularisation prevent overfitting?")
+print(answer)
+```""",
+    },
+    {
+        "id": "lc_langgraph_basic",
+        "title": "LangGraph — Basic State Graph",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Build your first LangGraph `StateGraph` (no LLM needed — pure graph logic).
+
+1. Import `StateGraph`, `END` from `langgraph.graph`; `TypedDict` from `typing`
+2. Define a `State` TypedDict with a single key: `messages: list`
+3. Define two node functions:
+   - `greet(state)`: appends `"Hello from greet!"` to messages, returns updated state
+   - `farewell(state)`: appends `"Goodbye from farewell!"` to messages, returns updated state
+4. Build the graph: add both nodes, set `greet` as entry point, add edge `greet → farewell`, add edge `farewell → END`
+5. Compile and invoke with `{"messages": []}`; print the final messages
+""",
+        "workspace_tip": (
+            "State must always be returned as a dict from node functions. "
+            "`set_entry_point('greet')` or `add_edge(START, 'greet')` both work. "
+            "`END` is imported from `langgraph.graph`."
+        ),
+        "hint": """\
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+class State(TypedDict):
+    messages: list
+
+def greet(state: State) -> State:
+    return {"messages": state["messages"] + ["Hello from greet!"]}
+
+def farewell(state: State) -> State:
+    return {"messages": state["messages"] + ["Goodbye from farewell!"]}
+
+graph = StateGraph(State)
+graph.add_node("greet", greet)
+graph.add_node("farewell", farewell)
+graph.set_entry_point("greet")
+graph.add_edge("greet", "farewell")
+graph.add_edge("farewell", END)
+app = graph.compile()
+result = app.invoke({"messages": []})
+print(result["messages"])
+```""",
+        "solution": """\
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+class State(TypedDict):
+    messages: list
+
+def greet(state: State) -> State:
+    return {"messages": state["messages"] + ["Hello from greet!"]}
+
+def farewell(state: State) -> State:
+    return {"messages": state["messages"] + ["Goodbye from farewell!"]}
+
+graph = StateGraph(State)
+graph.add_node("greet", greet)
+graph.add_node("farewell", farewell)
+graph.set_entry_point("greet")
+graph.add_edge("greet", "farewell")
+graph.add_edge("farewell", END)
+
+app = graph.compile()
+result = app.invoke({"messages": []})
+print("Final messages:")
+for msg in result["messages"]:
+    print(" -", msg)
+```""",
+    },
+    {
+        "id": "lc_langgraph_conditional",
+        "title": "LangGraph — Conditional Routing",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Add conditional routing to a LangGraph (no LLM needed — pure graph logic).
+
+1. Define a `State` TypedDict with `question: str` and `answer: str`
+2. Define a node `classify(state)` that sets `answer` to `"math"` if the question contains "calculate" else `"general"`
+3. Define nodes `math_node` and `general_node` that append their name to answer
+4. Define a router function `route(state)` that returns `"math_node"` or `"general_node"` based on `state["answer"]`
+5. Use `add_conditional_edges("classify", route, {"math_node": "math_node", "general_node": "general_node"})`
+6. Compile and test with both `"calculate 2+2"` and `"what is ML?"`
+""",
+        "workspace_tip": (
+            "`add_conditional_edges(source, router_fn, mapping)` — mapping keys must match "
+            "the strings returned by the router function."
+        ),
+        "hint": """\
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+class State(TypedDict):
+    question: str
+    answer: str
+
+def classify(state):
+    return {"answer": "math" if "calculate" in state["question"].lower() else "general"}
+
+def route(state):
+    return "math_node" if state["answer"] == "math" else "general_node"
+```""",
+        "solution": """\
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+class State(TypedDict):
+    question: str
+    answer: str
+
+def classify(state: State) -> State:
+    tag = "math" if "calculate" in state["question"].lower() else "general"
+    return {"answer": tag}
+
+def math_node(state: State) -> State:
+    return {"answer": state["answer"] + " → handled by math_node"}
+
+def general_node(state: State) -> State:
+    return {"answer": state["answer"] + " → handled by general_node"}
+
+def route(state: State) -> str:
+    return "math_node" if state["answer"] == "math" else "general_node"
+
+graph = StateGraph(State)
+graph.add_node("classify", classify)
+graph.add_node("math_node", math_node)
+graph.add_node("general_node", general_node)
+graph.set_entry_point("classify")
+graph.add_conditional_edges("classify", route, {
+    "math_node": "math_node",
+    "general_node": "general_node",
+})
+graph.add_edge("math_node", END)
+graph.add_edge("general_node", END)
+
+app = graph.compile()
+
+for q in ["calculate 2 + 2", "what is machine learning?"]:
+    result = app.invoke({"question": q, "answer": ""})
+    print(f"Q: {q!r}  →  {result['answer']}")
+```""",
+    },
+    {
+        "id": "lc_agent_tools",
+        "title": "LangGraph — LLM Agent with Tools",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Build a ReAct-style agent using LangGraph + Claude with tool calling.
+
+1. Define a `@tool` called `multiply(a: int, b: int) -> int` from `langchain_core.tools`
+2. Bind it to `ChatAnthropic(model="claude-haiku-4-5", max_tokens=200)`
+3. Build a `MessagesState` graph:
+   - `agent` node: calls the LLM
+   - `tools` node: `ToolNode([multiply])`
+4. Use `tools_condition` from `langgraph.prebuilt` for conditional routing: tool calls → `tools`, done → `END`
+5. Add edge `tools → agent` to loop back
+6. Invoke with `"What is 17 multiplied by 23?"` and print the final message content
+""",
+        "workspace_tip": (
+            "`MessagesState` is a built-in state with an `messages` key using `add_messages` reducer. "
+            "`tools_condition` automatically checks for tool_calls in the last AI message."
+        ),
+        "hint": """\
+```python
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph, MessagesState, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+@tool
+def multiply(a: int, b: int) -> int:
+    '''Multiply two integers.'''
+    return a * b
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200).bind_tools([multiply])
+```""",
+        "solution": """\
+```python
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_anthropic import ChatAnthropic
+from langgraph.graph import StateGraph, MessagesState, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+@tool
+def multiply(a: int, b: int) -> int:
+    '''Multiply two integers.'''
+    return a * b
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=200).bind_tools([multiply])
+
+def agent_node(state: MessagesState):
+    return {"messages": [llm.invoke(state["messages"])]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("agent", agent_node)
+graph.add_node("tools", ToolNode([multiply]))
+graph.set_entry_point("agent")
+graph.add_conditional_edges("agent", tools_condition)
+graph.add_edge("tools", "agent")
+
+app = graph.compile()
+
+result = app.invoke({"messages": [HumanMessage(content="What is 17 multiplied by 23?")]})
+print(result["messages"][-1].content)
+```""",
+    },
+    {
+        "id": "lc_memory_chat",
+        "title": "Conversational Memory",
+        "category": "LangChain",
+        "bucket": "LangChain",
+        "prompt": """\
+**Task:** Add persistent conversational memory to a LangChain chain using Claude.
+
+1. Use `ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)`
+2. Build a prompt with `MessagesPlaceholder("chat_history")` and a human `{input}` message
+3. Create an `InMemoryChatMessageHistory` store keyed by session id
+4. Wrap with `RunnableWithMessageHistory(chain, get_history, input_messages_key="input", history_messages_key="chat_history")`
+5. Have a 3-turn conversation — Turn 1: introduce yourself + a framework; Turn 2: ask what framework; Turn 3: ask your name
+6. Print each Human/AI exchange — Claude should recall earlier turns
+""",
+        "workspace_tip": (
+            "Pass `config={'configurable': {'session_id': 'demo'}}` on every `.invoke()`. "
+            "`InMemoryChatMessageHistory` is from `langchain_core.chat_history`."
+        ),
+        "hint": """\
+```python
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_anthropic import ChatAnthropic
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant."),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+store = {}
+def get_history(session_id):
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
+```""",
+        "solution": """\
+```python
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.output_parsers import StrOutputParser
+from langchain_anthropic import ChatAnthropic
+
+llm = ChatAnthropic(model="claude-haiku-4-5", max_tokens=150)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant."),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm | StrOutputParser()
+
+store = {}
+def get_history(session_id: str):
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
+
+chain_with_history = RunnableWithMessageHistory(
+    chain,
+    get_history,
+    input_messages_key="input",
+    history_messages_key="chat_history",
+)
+
+cfg = {"configurable": {"session_id": "demo"}}
+turns = [
+    "My name is Alex and I am learning PyTorch.",
+    "What framework did I mention?",
+    "What is my name?",
+]
+for turn in turns:
+    response = chain_with_history.invoke({"input": turn}, config=cfg)
+    print(f"Human: {turn}")
+    print(f"AI:    {response}\\n")
+```""",
+    },
+]
+
+ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS + PYTORCH_QUESTIONS + LANGCHAIN_QUESTIONS
 
 CATEGORY_ICON = {
     "ML/Statistics":    "🔵",
@@ -3749,6 +4555,7 @@ CATEGORY_ICON = {
     "Survival Analysis": "📈",
     "Integrated Drill": "🧩",
     "PyTorch":          "🔥",
+    "LangChain":        "🦜",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3775,6 +4582,7 @@ _defaults = {
     "custom_solutions": {},  # q_id → str  (user-promoted tested solution)
     "last_run_ok":   {},   # q_id → bool (last execution status)
     "last_run_code": {},   # q_id → str  (code that was last executed)
+    "openai_api_key": "",
     "run_output":    "",
     "run_error":     "",
     "run_figures":   [],
@@ -4085,6 +4893,24 @@ def _explain_error_with_llm(code: str, error: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# SIDEBAR — API keys
+# ──────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### 🔑 API Keys")
+    _ant_key = st.secrets.get(
+        "ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")
+    )
+    if _ant_key:
+        st.success("Anthropic key detected ✓", icon="✅")
+        st.caption("LangChain exercises will use `claude-haiku-4-5`.")
+    else:
+        st.warning(
+            "No `ANTHROPIC_API_KEY` found.  "
+            "Set it before starting the app to run LangChain exercises.",
+            icon="🦜",
+        )
+
+# ──────────────────────────────────────────────────────────────────────────────
 # HEADER
 # ──────────────────────────────────────────────────────────────────────────────
 _aq_h   = _active_questions()
@@ -4116,16 +4942,18 @@ st.divider()
 # Bucket selector
 _bucket_choice = st.radio(
     "Bucket",
-    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"],
+    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch", "LangChain"],
     format_func=lambda b: {
-        "Basic":    "🔵 Basic (ML / Python)",
+        "Basic":    "⚡ Basic (ML / Python)",
         "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
         "Clinical": "🏥 Clinical DS",
         "Integrated": "🧩 Integrated Drills",
         "PyTorch": "🔥 PyTorch",
+        "LangChain": "🦜 LangChain / LangGraph",
     }[b],
     horizontal=True,
-    index=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"].index(st.session_state.active_bucket),
+    index=["Basic", "Bioinformatics Engineer", "Clinical",
+           "Integrated", "PyTorch", "LangChain"].index(st.session_state.active_bucket),
     label_visibility="collapsed",
 )
 if _bucket_choice != st.session_state.active_bucket:
@@ -4239,7 +5067,8 @@ if left is not None:
 
         def _topic_label(qid: str) -> str:
             tq = next(t for t in _topics if t["id"] == qid)
-            short_title = tq["title"].split("—")[0].split("(")[0].strip()
+            _t = tq["title"].split("(")[0].strip()
+            short_title = _t if len(_t) <= 30 else _t[:28] + "…"
             level = st.session_state.difficulties.get(qid)
             if level == "easy":
                 return f"{short_title} [easy]"

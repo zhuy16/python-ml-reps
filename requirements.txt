@@ -7,3 +7,10 @@ matplotlib
 numpy
 lifelines
 torch
+langchain
+langchain-anthropic
+langchain-huggingface
+langchain-community
+langgraph
+faiss-cpu
+sentence-transformers

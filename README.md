@@ -1,6 +1,6 @@
 # 🧠 Python ML Reps
 
-**Active-recall training for Python, ML, Pandas & Bioinformatics — 41 questions across 4 practice buckets, inline code editor, hint/solution panel.**
+**Active-recall training for Python, ML, Pandas, Bioinformatics & LangChain/LangGraph — 58 questions across 6 practice buckets, inline code editor, hint/solution panel.**
 
 ![App interface](docs/screen_interface.png)
 
@@ -30,10 +30,10 @@ This app gives you:
 
 ## What's inside
 
-**41 questions** organised into four focused practice buckets.
+**58 questions** organised into six focused practice buckets.
 Switch buckets with the radio selector at the top of the app.
 
-### 🔵 Basic (10 questions)
+### ⚡ Basic (10 questions)
 
 Core ML and Python muscle memory.
 
@@ -94,20 +94,52 @@ Clinical data science: pandas from memory, scikit-learn end-to-end, and survival
 | 12 | Cox Proportional Hazards Model | Survival Analysis |
 | 13 | Integrated Clinical Genomics Drill | Survival Analysis |
 
-### 🧩 Integrated (1 question)
+### 🔥 PyTorch (8 questions)
 
-Large, realistic end-to-end drill to stitch parsing, preprocessing, EDA, merge operations, and plotting.
+Hands-on PyTorch muscle memory.
+
+| # | Topic |
+|---|-------|
+| 1 | Tensor Creation & Ops |
+| 2 | Autograd & Gradients |
+| 3 | Linear Layers |
+| 4 | MLP Definition |
+| 5 | Training Loop |
+| 6 | Dataset / DataLoader |
+| 7 | Conv2d + Pooling |
+| 8 | Save / Load State Dict |
+
+### 🦜 LangChain / LangGraph (8 questions)
+
+Core LangChain and LangGraph patterns using **Claude** (`claude-haiku-4-5`) and local HuggingFace embeddings — no OpenAI key needed.
+
+| # | Topic |
+|---|-------|
+| 1 | Chat Prompt Template (LCEL) |
+| 2 | Output Parsers (`StrOutputParser` + structured output) |
+| 3 | RAG — Embed & Retrieve (FAISS + HuggingFace) |
+| 4 | RAG — Full QA Chain (LCEL) |
+| 5 | LangGraph — Basic State Graph |
+| 6 | LangGraph — Conditional Routing |
+| 7 | LangGraph — LLM Agent with Tools |
+| 8 | Conversational Memory |
+
+### 🧩 Integrated (3 drills)
+
+Large, realistic end-to-end drills.
 
 | # | Topic | Category |
 |---|-------|----------|
 | 1 | Integrated VCF Pipeline: Parse → Clean → EDA → Merge → Plot | Integrated Drill |
+| 2 | Integrated PyTorch Workflow: Tensor → DataLoader → Train → Evaluate | Integrated Drill |
+| 3 | LangChain / LangGraph End-to-End: RAG + Agent + Structured Output | Integrated Drill |
 
 **App layout:**
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  🧠 Python ML Reps  ✅ N Easy  � N Hard  📝 N/N  ░░░░ 🎯 X/N mastered (%)  │  ← header
-│  �🔵 Basic (ML/Python)  🧬 Bioinformatics Engineer  🏥 Clinical DS            │  ← bucket
+│  ⚡ Basic  🧬 Bioinformatics Engineer  🏥 Clinical DS  🧩 Integrated  🔥 PyTorch  🦜 LangChain  │  ← bucket
 └──────────────────────────────────────────────────────────────────────────────┘
 ┌───────────────────┬──────────────────────────────────────┬──────────────────┐
 │  LEFT             │  CENTER (dominant)                   │  RIGHT           │
@@ -182,9 +214,30 @@ seaborn
 matplotlib
 numpy
 lifelines
+torch
+langchain
+langchain-anthropic
+langchain-huggingface
+langchain-community
+langgraph
+faiss-cpu
+sentence-transformers
 ```
 
-`lifelines` is required for the Kaplan-Meier, log-rank test, and Cox PH questions in the Clinical DS bucket.
+- `lifelines` — Kaplan-Meier, log-rank test, and Cox PH questions (Clinical DS bucket)
+- `torch` — PyTorch bucket
+- `langchain-anthropic` — LangChain/LangGraph questions use `claude-haiku-4-5` via your `ANTHROPIC_API_KEY`
+- `sentence-transformers` / `faiss-cpu` — RAG questions use local `all-MiniLM-L6-v2` embeddings (no API key needed)
+
+### API key for LangChain exercises
+
+Set your Anthropic key before starting the app:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... streamlit run apps/streamlit_app.py
+```
+
+The sidebar will show a green ✅ when the key is detected. LangGraph and pure-graph exercises run without any key.
 
 ---
 
