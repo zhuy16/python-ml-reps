@@ -1,6 +1,6 @@
 # 🧠 Python ML Reps
 
-**Active-recall training for Python, ML, Pandas, Bioinformatics & LangChain/LangGraph — 58 questions across 6 practice buckets, inline code editor, hint/solution panel.**
+**Active-recall training for Python, ML, Pandas, Bioinformatics & LangChain/LangGraph — multi-bucket drills with inline code editor, hint/solution support, and practice-first workflows.**
 
 ![App interface](docs/screen_interface.png)
 
@@ -26,11 +26,19 @@ This app gives you:
 - **Progress bar** — see `X/N mastered` for the active bucket at a glance
 - **Miss tracking** — the app counts how many times you've marked each topic Hard so you can see your blind spots
 
+## Recent updates (v0.8.0)
+
+- Added **Python Efficiency** bucket (`🧵`) with threading, multiprocessing, memory-efficiency, and AnnData pipeline practice.
+- Added **Unfamiliar Python** bucket (`🧠`) with day-structured drills for concurrency, idioms, pytest, and timed code-reading.
+- Added **Split solution** side-by-side mode for copy-by-typing practice with adjustable panel width.
+- Improved **Ask Claude** so questions include active solution-code context for better explanations.
+- Fixed run-button state highlighting so `Run Code` / `Run Solution` reflects the last source executed.
+
 ---
 
 ## What's inside
 
-**58 questions** organised into six focused practice buckets.
+Questions are organised into focused practice buckets.
 Switch buckets with the radio selector at the top of the app.
 
 ### ⚡ Basic (10 questions)

@@ -4542,7 +4542,1938 @@ for turn in turns:
     },
 ]
 
-ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS + PYTORCH_QUESTIONS + LANGCHAIN_QUESTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+# SC / SPATIAL QUESTIONS  (Scanpy · scVelo · Squidpy)
+# ──────────────────────────────────────────────────────────────────────────────
+SC_SPATIAL_QUESTIONS = [
+    {
+        "id": "sc_scanpy_pipeline",
+        "title": "Scanpy scRNA-seq Pipeline",
+        "bucket": "SC/Spatial",
+        "category": "Scanpy",
+        "prompt": """\
+**Task:** Run the canonical Scanpy single-cell RNA-seq pipeline from memory.
+
+1. `import scanpy as sc`
+2. Load `pbmc3k` with `sc.datasets.pbmc3k()`
+3. Filter cells: `min_genes=200`; filter genes: `min_cells=3`
+4. Flag mitochondrial genes (`MT-` prefix) into `adata.var['mt']`
+5. Calculate QC metrics (`qc_vars=['mt']`, `inplace=True`)
+6. Normalise total counts to `target_sum=1e4`, then log1p
+7. Select highly variable genes (`n_top_genes=2000`) and subset
+8. Scale to `max_value=10`, run PCA, compute neighbors
+9. Cluster with Leiden, compute UMAP
+""",
+        "workspace_tip": (
+            "Order matters: normalize → log1p → HVG → scale → PCA → neighbors → leiden → umap. "
+            "Subsetting with `adata[:, adata.var.highly_variable].copy()` keeps the object clean."
+        ),
+        "hint": """\
+```python
+import scanpy as sc
+adata = sc.datasets.pbmc3k()
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
+adata.var['mt'] = adata.var_names.str.startswith('MT-')
+sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], inplace=True)
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+sc.pp.highly_variable_genes(adata, n_top_genes=2000)
+adata = adata[:, adata.var.highly_variable].copy()
+sc.pp.scale(adata, max_value=10)
+sc.tl.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.leiden(adata)
+sc.tl.umap(adata)
+```""",
+        "solution": """\
+```python
+import scanpy as sc
+
+adata = sc.datasets.pbmc3k()
+
+# QC filtering
+sc.pp.filter_cells(adata, min_genes=200)
+sc.pp.filter_genes(adata, min_cells=3)
+
+# Mitochondrial QC
+adata.var['mt'] = adata.var_names.str.startswith('MT-')
+sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], inplace=True)
+
+# Normalisation & log transform
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+
+# Feature selection & scaling
+sc.pp.highly_variable_genes(adata, n_top_genes=2000)
+adata = adata[:, adata.var.highly_variable].copy()
+sc.pp.scale(adata, max_value=10)
+
+# Dimensionality reduction & clustering
+sc.tl.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.leiden(adata)
+sc.tl.umap(adata)
+
+print(adata)
+```""",
+    },
+    {
+        "id": "sc_scvelo_stochastic",
+        "title": "scVelo — Stochastic Velocity",
+        "bucket": "SC/Spatial",
+        "category": "scVelo",
+        "prompt": """\
+**Task:** Run the scVelo stochastic RNA velocity pipeline from memory.
+
+1. `import scvelo as scv`
+2. Load the built-in pancreas dataset: `scv.datasets.pancreas()` (has spliced/unspliced layers)
+3. Filter and normalize with `scv.pp.filter_and_normalize` (`min_shared_counts=20`)
+4. Compute moments: `n_pcs=30`, `n_neighbors=30`
+5. Estimate velocity with `mode='stochastic'`
+6. Build the velocity graph
+7. Plot velocity embedding stream on `basis='umap'`
+""",
+        "workspace_tip": (
+            "scVelo wraps Scanpy — `adata` needs spliced/unspliced layers; `pancreas()` has them. "
+            "The order is always: filter_and_normalize → moments → velocity → velocity_graph → plot. "
+            "Note: `mode='stochastic'` is broken on numpy 2.x (Python 3.14); use `mode='deterministic'` to run."
+        ),
+        "hint": """\
+```python
+import scvelo as scv
+adata = scv.datasets.pancreas()
+scv.pp.filter_and_normalize(adata, min_shared_counts=20)
+scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+scv.tl.velocity(adata, mode='deterministic')  # stochastic broken on numpy 2.x
+scv.tl.velocity_graph(adata)
+scv.pl.velocity_embedding_stream(adata, basis='umap')
+```""",
+        "solution": """\
+```python
+import scvelo as scv
+
+adata = scv.datasets.pancreas()
+
+# Preprocessing
+scv.pp.filter_and_normalize(adata, min_shared_counts=20)
+scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+
+# Velocity — use 'stochastic' in interviews; 'deterministic' as numpy-2.x workaround
+scv.tl.velocity(adata, mode='deterministic')
+scv.tl.velocity_graph(adata)
+
+# Visualise
+scv.pl.velocity_embedding_stream(adata, basis='umap')
+```""",
+    },
+    {
+        "id": "sc_scvelo_dynamical",
+        "title": "scVelo — Dynamical Velocity & Latent Time",
+        "bucket": "SC/Spatial",
+        "category": "scVelo",
+        "prompt": """\
+**Task:** Run the scVelo *dynamical* model and compute latent time from memory.
+
+1. Load `scv.datasets.pancreas()` and run preprocessing (`filter_and_normalize(min_shared_counts=20)`, `moments`)
+2. Recover full splicing dynamics with `scv.tl.recover_dynamics`
+3. Estimate velocity with `mode='dynamical'`
+4. Build the velocity graph
+5. Compute `latent_time`
+""",
+        "workspace_tip": (
+            "`recover_dynamics` is the expensive step — it fits kinetic parameters per gene. "
+            "After `latent_time`, you can plot `scv.pl.scatter(adata, color='latent_time')`."
+        ),
+        "hint": """\
+```python
+import scvelo as scv
+adata = scv.datasets.pancreas()
+scv.pp.filter_and_normalize(adata, min_shared_counts=20)
+scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+scv.tl.recover_dynamics(adata)
+scv.tl.velocity(adata, mode='dynamical')
+scv.tl.velocity_graph(adata)
+scv.tl.latent_time(adata)
+```""",
+        "solution": """\
+```python
+import scvelo as scv
+
+adata = scv.datasets.pancreas()
+
+# Preprocessing (same as stochastic step)
+scv.pp.filter_and_normalize(adata, min_shared_counts=20)
+scv.pp.moments(adata, n_pcs=30, n_neighbors=30)
+
+# Fit kinetic parameters (slow — once per dataset)
+scv.tl.recover_dynamics(adata)
+
+# Dynamical velocity
+scv.tl.velocity(adata, mode='dynamical')
+scv.tl.velocity_graph(adata)
+
+# Latent time (pseudotime from velocity)
+scv.tl.latent_time(adata)
+
+# Optional visualisation
+scv.pl.scatter(adata, color='latent_time', color_map='gnuplot', size=80)
+```""",
+    },
+    {
+        "id": "sc_squidpy_spatial",
+        "title": "Squidpy — Spatial Transcriptomics",
+        "bucket": "SC/Spatial",
+        "category": "Squidpy",
+        "prompt": """\
+**Task:** Run a Squidpy spatial analysis pipeline from memory.
+
+1. `import squidpy as sq` and load `sq.datasets.visium_hne_adata()` (has spatial coordinates)
+2. Add leiden clusters: normalize → log1p → PCA → neighbors → `sc.tl.leiden`
+3. Build a spatial neighbor graph: `coord_type='generic'`, `n_rings=1`
+4. Compute Moran's I spatial autocorrelation (`mode='moran'`)
+5. Run neighborhood enrichment analysis (`cluster_key='leiden'`)
+6. Run ligand-receptor co-expression: `n_perms=100`, `cluster_key='leiden'`, `use_raw=False`
+7. Plot a spatial scatter coloured by `'leiden'`
+""",
+        "workspace_tip": (
+            "All `sq.gr.*` functions operate on `adata` in-place. "
+            "`spatial_neighbors` must come first — the graph is used by autocorr and nhood_enrichment. "
+            "Use `coord_type='generic'` for Visium; `ligrec` uses the built-in CellChatDB resource."
+        ),
+        "hint": """\
+```python
+import squidpy as sq
+import scanpy as sc
+adata = sq.datasets.visium_hne_adata()
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+sc.pp.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.leiden(adata)
+sq.gr.spatial_neighbors(adata, coord_type='generic', n_rings=1)
+sq.gr.spatial_autocorr(adata, mode='moran')
+sq.gr.nhood_enrichment(adata, cluster_key='leiden')
+sq.gr.ligrec(adata, n_perms=100, cluster_key='leiden', use_raw=False)
+adata.uns.pop('leiden_colors', None)
+sq.pl.spatial_scatter(adata, color='leiden')
+```""",
+        "solution": """\
+```python
+import squidpy as sq
+import scanpy as sc
+
+# Load Visium dataset (has spatial coordinates)
+adata = sq.datasets.visium_hne_adata()
+
+# Add leiden clusters
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+sc.pp.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.leiden(adata)
+
+# Spatial neighborhood graph (required first)
+sq.gr.spatial_neighbors(adata, coord_type='generic', n_rings=1)
+
+# Spatial autocorrelation — Moran's I
+sq.gr.spatial_autocorr(adata, mode='moran')
+print(adata.uns['moranI'].head())
+
+# Neighborhood enrichment
+sq.gr.nhood_enrichment(adata, cluster_key='leiden')
+
+# Ligand-receptor co-expression
+sq.gr.ligrec(adata, n_perms=100, cluster_key='leiden', use_raw=False)
+
+# Spatial scatter plot
+adata.uns.pop('leiden_colors', None)  # drop stale palette if present
+sq.pl.spatial_scatter(adata, color='leiden')
+```""",
+    },
+]
+
+EFFICIENCY_QUESTIONS = [
+    # ── 1. Dict Lookup vs Nested Loop ──────────────────────────────────────
+    {
+        "id": "eff_dict_lookup",
+        "title": "Dict Lookup — O(1) vs O(n²) Loop",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Show why a dict/set lookup is faster than a nested loop for finding shared items.
+
+Given two lists of gene names (`genes_a`, `genes_b`), write **both** approaches:
+
+1. **O(n²) nested loop** — iterate over both lists and collect matches
+2. **O(n) set lookup** — build a `set` from one list, then filter the other
+
+Print the matches from each approach and assert they are equal.
+""",
+        "workspace_tip": (
+            "Build `lookup = set(genes_b)` once outside the comprehension. "
+            "`x in set` is O(1); `x in list` is O(n)."
+        ),
+        "hint": """\
+```python
+genes_a = [f"GENE_{i}" for i in range(500)]
+genes_b = [f"GENE_{i}" for i in range(250, 750)]
+
+# O(n²)
+nested = [g for g in genes_a for g2 in genes_b if g == g2]
+
+# O(n) — build a set first
+lookup = set(genes_b)
+fast   = [g for g in genes_a if g in lookup]
+
+assert sorted(nested) == sorted(fast)
+print(f"Shared genes: {len(fast)}")
+```""",
+        "solution": """\
+```python
+import time
+
+genes_a = [f"GENE_{i}" for i in range(500)]
+genes_b = [f"GENE_{i}" for i in range(250, 750)]
+
+# BAD: O(n²) nested loop
+t0 = time.perf_counter()
+nested_matches = [g for g in genes_a for g2 in genes_b if g == g2]
+nested_time = time.perf_counter() - t0
+
+# GOOD: O(n) — dict/set lookup is O(1) average
+t0 = time.perf_counter()
+lookup = set(genes_b)
+fast_matches = [g for g in genes_a if g in lookup]
+fast_time = time.perf_counter() - t0
+
+assert sorted(nested_matches) == sorted(fast_matches)
+print(f"Shared genes   : {len(fast_matches)}")
+print(f"Nested loop    : {nested_time*1000:.2f} ms")
+print(f"Set lookup     : {fast_time*1000:.2f} ms")
+print(f"Speedup        : {nested_time/fast_time:.1f}x")
+```""",
+    },
+    # ── 2. Generator vs List ───────────────────────────────────────────────
+    {
+        "id": "eff_generator",
+        "title": "Generator vs List for Memory",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Demonstrate the memory difference between a list and a generator.
+
+1. Create a **list comprehension** that doubles numbers 0–9 999
+2. Create an equivalent **generator expression**
+3. Use `sys.getsizeof()` to print the size of each
+4. Show that iterating the generator still produces the same values as the list
+""",
+        "workspace_tip": (
+            "A generator has a fixed ~120-byte footprint regardless of how many "
+            "items it would yield. The list pre-allocates all elements in RAM."
+        ),
+        "hint": """\
+```python
+import sys
+
+n = 10_000
+values_list = [x * 2 for x in range(n)]       # loads all into RAM
+values_gen  = (x * 2 for x in range(n))        # lazy, one item at a time
+
+print(sys.getsizeof(values_list))   # large
+print(sys.getsizeof(values_gen))    # tiny, fixed
+
+assert list(values_gen) == values_list
+```""",
+        "solution": """\
+```python
+import sys
+
+n = 10_000
+
+# List: loads everything into RAM
+values_list = [x * 2 for x in range(n)]
+
+# Generator: lazy, one item at a time
+values_gen  = (x * 2 for x in range(n))
+
+print(f"List size    : {sys.getsizeof(values_list):,} bytes")
+print(f"Generator sz : {sys.getsizeof(values_gen):,} bytes")
+print(f"Ratio        : {sys.getsizeof(values_list) / sys.getsizeof(values_gen):.0f}x")
+
+# Both produce the same values — recreate generator (it's exhausted after one pass)
+values_gen2 = (x * 2 for x in range(n))
+assert list(values_gen2) == values_list
+print("Values match ✓")
+```""",
+    },
+    # ── 3. List Comprehension Filter ──────────────────────────────────────
+    {
+        "id": "eff_lc_filter",
+        "title": "List Comprehension Filter (QC)",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Filter a cell QC dictionary using a list comprehension.
+
+Given `qc_dict` mapping `cell_id → {"n_genes": int, "pct_mt": float}`, produce a
+`high_quality` list of cell IDs where:
+
+- `n_genes > 200`  **and**
+- `pct_mt < 20`
+
+Print the count of passing cells.
+""",
+        "workspace_tip": (
+            "Use `qc_dict.items()` to iterate over `(cell, qc)` pairs inside the comprehension. "
+            "Both conditions go in the `if` clause."
+        ),
+        "hint": """\
+```python
+qc_dict = {
+    f"cell_{i}": {"n_genes": 200 + i * 3, "pct_mt": 5 + (i % 30)}
+    for i in range(100)
+}
+
+high_quality = [
+    cell
+    for cell, qc in qc_dict.items()
+    if qc["n_genes"] > 200 and qc["pct_mt"] < 20
+]
+print(len(high_quality))
+```""",
+        "solution": """\
+```python
+qc_dict = {
+    f"cell_{i}": {"n_genes": 200 + i * 3, "pct_mt": 5 + (i % 30)}
+    for i in range(100)
+}
+
+# List comprehension filter — concise and readable
+high_quality = [
+    cell
+    for cell, qc in qc_dict.items()
+    if qc["n_genes"] > 200 and qc["pct_mt"] < 20
+]
+
+print(f"Passing cells : {len(high_quality)}")
+print(f"First 5       : {high_quality[:5]}")
+
+# Verify constraints
+assert all(qc_dict[c]["n_genes"] > 200 for c in high_quality)
+assert all(qc_dict[c]["pct_mt"]  < 20  for c in high_quality)
+print("Constraints verified ✓")
+```""",
+    },
+    # ── 4. ThreadPoolExecutor ─────────────────────────────────────────────
+    {
+        "id": "eff_threadpool",
+        "title": "ThreadPoolExecutor — Parallel File I/O",
+        "category": "Threading",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Process multiple files concurrently using `ThreadPoolExecutor`.
+
+1. Import `ThreadPoolExecutor` and `as_completed` from `concurrent.futures`
+2. Define `process_one(path)` that reads the file and returns `(path, line_count)`
+3. Submit all paths with `executor.submit()`
+4. Collect results **as they finish** with `as_completed()`
+5. Print each path and its line count
+""",
+        "workspace_tip": (
+            "Use `max_workers=2–4` for file I/O. "
+            "`as_completed()` yields futures in completion order, not submission order. "
+            "Call `future.result()` inside a try/except to handle per-file errors."
+        ),
+        "hint": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+def process_one(path):
+    lines = Path(path).read_text().splitlines()
+    return path, len(lines)
+
+paths = [...]   # list of Path objects
+
+results = {}
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = {executor.submit(process_one, p): p for p in paths}
+    for future in as_completed(futures):
+        path, count = future.result()
+        results[path] = count
+        print(f"{path.name}: {count} lines")
+```""",
+        "solution": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+import tempfile, os
+
+# Create sample files to process
+with tempfile.TemporaryDirectory() as tmpdir:
+    paths = []
+    for i in range(4):
+        p = Path(tmpdir) / f"sample_{i}.txt"
+        p.write_text("\\n".join(f"line {j}" for j in range(50 + i * 10)))
+        paths.append(p)
+
+    def process_one(path: Path):
+        return path, len(path.read_text().splitlines())
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(process_one, p): p for p in paths}
+        for future in as_completed(futures):
+            try:
+                path, count = future.result()
+                results[path] = count
+                print(f"{path.name}: {count} lines")
+            except Exception as e:
+                print(f"Failed: {e}")
+
+    print(f"\\nProcessed {len(results)} files")
+    assert len(results) == len(paths)
+```""",
+    },
+    # ── 5. ThreadPoolExecutor — exception handling ────────────────────────
+    {
+        "id": "eff_threadpool_exc",
+        "title": "ThreadPoolExecutor — Exception Handling",
+        "category": "Threading",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Handle per-worker exceptions gracefully in a thread pool.
+
+You have a mix of valid and invalid file paths. Write code that:
+
+1. Submits all paths to a `ThreadPoolExecutor`
+2. Uses `as_completed()` to collect results
+3. Wraps `future.result()` in `try/except` so one failure doesn't crash the loop
+4. Prints success results and error messages separately
+5. Assert that successful results equal the number of valid paths
+""",
+        "workspace_tip": (
+            "`future.result()` re-raises any exception thrown in the worker thread. "
+            "Catching it per-future lets the pool keep running the other tasks."
+        ),
+        "hint": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+def process_one(path):
+    return path, len(Path(path).read_text().splitlines())
+
+paths = [valid_path, Path("/nonexistent/file.txt")]
+
+errors, results = [], {}
+with ThreadPoolExecutor(max_workers=2) as executor:
+    futures = {executor.submit(process_one, p): p for p in paths}
+    for future in as_completed(futures):
+        try:
+            path, count = future.result()
+            results[path] = count
+        except Exception as e:
+            errors.append(e)
+
+print(f"OK: {len(results)}, Errors: {len(errors)}")
+```""",
+        "solution": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    good = Path(tmpdir) / "good.txt"
+    good.write_text("line1\\nline2\\nline3")
+    bad  = Path(tmpdir) / "nonexistent.txt"   # does not exist
+
+    def process_one(path: Path):
+        return path, len(path.read_text().splitlines())
+
+    errors, results = [], {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(process_one, p): p for p in [good, bad]}
+        for future in as_completed(futures):
+            try:
+                path, count = future.result()
+                results[path] = count
+                print(f"OK  {path.name}: {count} lines")
+            except Exception as exc:
+                errors.append(exc)
+                print(f"ERR {exc}")
+
+    print(f"\\nSucceeded: {len(results)}, Failed: {len(errors)}")
+    assert len(results) == 1
+    assert len(errors)  == 1
+    print("Exception handling verified ✓")
+```""",
+    },
+    # ── 6. map() vs as_completed() — ordered vs first-to-finish ──────────
+    {
+        "id": "eff_map_vs_as_completed",
+        "title": "map() vs as_completed() — Ordered vs First-to-Finish",
+        "category": "Threading",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Understand and demonstrate the key difference between `executor.map()` and `as_completed()`.
+
+1. Write `slow_task(x)` that sleeps for `(5 - x) * 0.1` seconds then returns `x`
+   — so task 4 finishes first, task 0 finishes last
+2. Run it with **`executor.map()`** and print results as you iterate — observe the output order
+3. Run it again with **`submit()` + `as_completed()`** — observe the output order
+4. Add a comment explaining when to use each
+
+Expected insight:
+- `map()` → output always matches input order (waits for earlier tasks even if later ones finished)
+- `as_completed()` → prints whichever finishes first
+""",
+        "workspace_tip": (
+            "`executor.map(fn, items)` is equivalent to `[fn(x) for x in items]` "
+            "but concurrent — however it **blocks** each result until prior ones are ready. "
+            "Use `as_completed()` when you want to react to results as they arrive."
+        ),
+        "hint": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def slow_task(x):
+    time.sleep((5 - x) * 0.1)   # x=4 finishes first, x=0 finishes last
+    return x
+
+items = list(range(5))
+
+# map() — concurrent but ordered output
+with ThreadPoolExecutor(max_workers=5) as executor:
+    for result in executor.map(slow_task, items):
+        print("map:", result)       # always 0,1,2,3,4
+
+# as_completed() — output in completion order
+with ThreadPoolExecutor(max_workers=5) as executor:
+    futures = [executor.submit(slow_task, x) for x in items]
+    for future in as_completed(futures):
+        print("as_completed:", future.result())   # likely 4,3,2,1,0
+```""",
+        "solution": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+def slow_task(x):
+    \"\"\"Sleeps longer for smaller x, so higher x finishes first.\"\"\"
+    time.sleep((5 - x) * 0.05)
+    return x
+
+items = list(range(5))
+
+# ── executor.map() ───────────────────────────────────────────────────────────
+# concurrent execution, BUT output is yielded in INPUT order.
+# If item 0 takes longest, map() still waits before yielding item 1.
+print("=== executor.map() — ordered output ===")
+with ThreadPoolExecutor(max_workers=5) as executor:
+    for result in executor.map(slow_task, items):
+        print(f"  map → {result}")          # always 0, 1, 2, 3, 4
+
+# ── submit() + as_completed() ────────────────────────────────────────────────
+# concurrent execution AND output arrives as soon as each task finishes.
+# Use this when you want to react immediately (logging, streaming, early stop).
+print("\\n=== as_completed() — first-to-finish output ===")
+with ThreadPoolExecutor(max_workers=5) as executor:
+    futures = [executor.submit(slow_task, x) for x in items]
+    for future in as_completed(futures):
+        print(f"  as_completed → {future.result()}")   # likely 4, 3, 2, 1, 0
+
+# Summary
+print(\"\"\"
+Rule of thumb
+─────────────────────────────────────────────
+executor.map()    concurrent, ordered output   ← simpler, use when order matters
+as_completed()    concurrent, arrival order    ← use when you want first-to-finish
+\"\"\")
+```""",
+    },
+    # ── 7. submit() queue — single shared queue ───────────────────────────
+    {
+        "id": "eff_submit_queue",
+        "title": "submit() Queue — How the Thread Pool Schedules Work",
+        "category": "Threading",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Show that all jobs are submitted immediately but only `max_workers` run at once.
+
+1. Submit 6 jobs to a `ThreadPoolExecutor(max_workers=2)`
+2. Each job should print when it **starts** and when it **finishes**
+3. Observe that only 2 jobs run simultaneously — the rest wait in a **single shared queue**
+4. Collect all futures in a list first, then wait for them with `as_completed()`
+
+Key insight to verify:
+- `submit()` returns a `Future` instantly — it does **not** block
+- All 6 futures exist in Python immediately, but only 2 workers are executing at a time
+- There is **one shared queue**, not one queue per worker
+""",
+        "workspace_tip": (
+            "Print `threading.current_thread().name` inside the worker to see which thread is running. "
+            "`submit()` never blocks — it just enqueues. "
+            "The executor's internal queue feeds all workers from a single FIFO queue."
+        ),
+        "hint": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time, threading
+
+def work(i):
+    name = threading.current_thread().name
+    print(f"  START job {i} on {name}")
+    time.sleep(0.1)
+    print(f"  END   job {i} on {name}")
+    return i
+
+futures = []
+with ThreadPoolExecutor(max_workers=2) as executor:
+    for i in range(6):
+        future = executor.submit(work, i)   # returns immediately
+        futures.append(future)
+    # all 6 submitted; only 2 running at a time
+
+    for f in as_completed(futures):
+        print("done:", f.result())
+```""",
+        "solution": """\
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time, threading
+
+def work(i):
+    name = threading.current_thread().name
+    print(f"  START job {i:2d}  [{name}]")
+    time.sleep(0.08)
+    print(f"  END   job {i:2d}  [{name}]")
+    return i * i
+
+print("Submitting 6 jobs to a pool with max_workers=2")
+print("(only 2 run at a time — the rest wait in one shared queue)\\n")
+
+futures = []
+with ThreadPoolExecutor(max_workers=2) as executor:
+    for i in range(6):
+        # submit() enqueues the job and returns a Future IMMEDIATELY.
+        # It does NOT wait for the job to start or finish.
+        future = executor.submit(work, i)
+        futures.append(future)
+
+    # At this point all 6 Future objects exist in Python,
+    # but at most 2 workers are actually executing.
+    results = []
+    for f in as_completed(futures):
+        results.append(f.result())
+
+print(f"\\nAll done. Results (arrival order): {results}")
+
+# Key takeaways:
+# - ONE shared queue feeds ALL workers (not one queue per thread)
+# - submit() is non-blocking; the Future tracks the eventual result
+# - max_workers controls concurrency, not how many jobs you can submit
+assert len(results) == 6
+print("Queue behaviour verified ✓")
+```""",
+    },
+    # ── 8. Dict merge — second wins ───────────────────────────────────────
+    {
+        "id": "eff_dict_merge",
+        "title": "Dict Merge — Second Dict Wins",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Merge two cell-annotation dictionaries so that the second dict's values win on conflicts.
+
+Given:
+```python
+ann1 = {"cell1": "T cell", "cell2": "B cell", "cell3": "Monocyte"}
+ann2 = {"cell3": "Macrophage", "cell4": "NK cell"}
+```
+
+1. Write `merge_annotations(ann1, ann2)` using `.copy()` + `.update()`
+2. Also write `compare_annotation_keys(ann1, ann2)` returning a dict with keys:
+   `overlap`, `only_ann1`, `only_ann2`, `all_cells` — each a **set**
+3. Print both results
+""",
+        "workspace_tip": (
+            "`d1.copy()` then `.update(d2)` is the classic in-place merge — d2 wins on conflicts. "
+            "For set ops: `&` = intersection, `-` = difference, `|` = union."
+        ),
+        "hint": """\
+```python
+def merge_annotations(ann1, ann2):
+    merged = ann1.copy()
+    merged.update(ann2)
+    return merged
+
+def compare_annotation_keys(ann1, ann2):
+    keys1, keys2 = set(ann1), set(ann2)
+    return {
+        "overlap":   keys1 & keys2,
+        "only_ann1": keys1 - keys2,
+        "only_ann2": keys2 - keys1,
+        "all_cells": keys1 | keys2,
+    }
+```""",
+        "solution": """\
+```python
+ann1 = {"cell1": "T cell", "cell2": "B cell", "cell3": "Monocyte"}
+ann2 = {"cell3": "Macrophage", "cell4": "NK cell"}
+
+# Pattern: second dict wins
+def merge_annotations(ann1, ann2):
+    merged = ann1.copy()
+    merged.update(ann2)
+    return merged
+
+# Pattern: set-based key comparison
+def compare_annotation_keys(ann1, ann2):
+    keys1 = set(ann1)
+    keys2 = set(ann2)
+    return {
+        "overlap":   keys1 & keys2,
+        "only_ann1": keys1 - keys2,
+        "only_ann2": keys2 - keys1,
+        "all_cells": keys1 | keys2,
+    }
+
+merged = merge_annotations(ann1, ann2)
+print("Merged:", merged)
+# cell3 → Macrophage (ann2 won)
+
+comparison = compare_annotation_keys(ann1, ann2)
+print("Overlap  :", comparison["overlap"])
+print("Only ann1:", comparison["only_ann1"])
+print("Only ann2:", comparison["only_ann2"])
+print("All cells:", comparison["all_cells"])
+
+assert merged["cell3"] == "Macrophage"
+assert comparison["overlap"] == {"cell3"}
+print("Assertions passed ✓")
+```""",
+    },
+    # ── 7. Batch iterator ─────────────────────────────────────────────────
+    {
+        "id": "eff_batch_iter",
+        "title": "Batch Iterator — Memory-Safe Loop",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Write a reusable `batch_iter(items, batch_size)` generator and use it.
+
+1. `batch_iter` should **yield** successive slices of `items`
+2. Use it to print batches of `list(range(10))` with `batch_size=3`
+3. Then write a `run_inference_in_batches(model, data, batch_size=32)` skeleton:
+   - Iterate over batches
+   - Call `model(batch)` and extend an `outputs` list
+   - Return `outputs`
+""",
+        "workspace_tip": (
+            "Use `range(0, len(items), batch_size)` to step through indices. "
+            "A generator with `yield` avoids building the full list of batches in memory at once."
+        ),
+        "hint": """\
+```python
+def batch_iter(items, batch_size):
+    for i in range(0, len(items), batch_size):
+        yield items[i:i + batch_size]
+
+for batch in batch_iter(list(range(10)), batch_size=3):
+    print(batch)
+
+def run_inference_in_batches(model, data, batch_size=32):
+    outputs = []
+    for batch in batch_iter(data, batch_size):
+        outputs.extend(model(batch))
+    return outputs
+```""",
+        "solution": """\
+```python
+def batch_iter(items, batch_size):
+    \"\"\"Yield batches — avoids loading everything at once.\"\"\"
+    for i in range(0, len(items), batch_size):
+        yield items[i:i + batch_size]
+
+# Practice: print batches
+items = list(range(10))
+for batch in batch_iter(items, batch_size=3):
+    print(batch)
+# [0,1,2], [3,4,5], [6,7,8], [9]
+
+# Inference skeleton — swap model(batch) for your real call
+def run_inference_in_batches(model, data, batch_size=32):
+    \"\"\"Memory-safe model inference over any iterable.\"\"\"
+    outputs = []
+    for batch in batch_iter(data, batch_size):
+        batch_output = model(batch)   # returns a list-like
+        outputs.extend(batch_output)
+    return outputs
+
+# Smoke-test with identity model
+result = run_inference_in_batches(lambda b: b, list(range(100)), batch_size=32)
+assert result == list(range(100))
+print("batch_iter verified ✓")
+```""",
+    },
+    # ── 8. ProcessPoolExecutor — CPU-bound work ───────────────────────────
+    {
+        "id": "eff_processpool",
+        "title": "ProcessPoolExecutor — CPU-Bound Work",
+        "category": "Threading",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Run a CPU-heavy function in parallel using `ProcessPoolExecutor`.
+
+1. Define `cpu_heavy_task(x)` that computes a large sum over a million iterations
+2. Use `ProcessPoolExecutor(max_workers=4)` with `executor.map()` to run it on `[1, 2, 3, 4]`
+3. Print each result
+4. Write `choose_parallel_strategy(task_type)` that returns the right advice for
+   `"io"`, `"cpu"`, and `"gpu"` inputs
+""",
+        "workspace_tip": (
+            "Use `ProcessPoolExecutor` for CPU-bound pure Python — it bypasses the GIL. "
+            "`executor.map()` is simpler than `submit` when you don't need per-future error handling. "
+            "Keep `max_workers` low (2-4) for large-memory tasks."
+        ),
+        "hint": """\
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def cpu_heavy_task(x):
+    total = 0
+    for i in range(1_000_000):
+        total += (x + i) ** 2
+    return total
+
+with ProcessPoolExecutor(max_workers=4) as executor:
+    results = list(executor.map(cpu_heavy_task, [1, 2, 3, 4]))
+
+print(results)
+```""",
+        "solution": """\
+```python
+from concurrent.futures import ProcessPoolExecutor
+
+def cpu_heavy_task(x):
+    \"\"\"CPU-bound: sum of squares. Multiprocessing bypasses the GIL.\"\"\"
+    total = 0
+    for i in range(1_000_000):
+        total += (x + i) ** 2
+    return total
+
+def run_cpu_tasks_parallel(items, max_workers=4):
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        return list(executor.map(cpu_heavy_task, items))
+
+results = run_cpu_tasks_parallel([1, 2, 3, 4], max_workers=4)
+for x, r in zip([1, 2, 3, 4], results):
+    print(f"cpu_heavy_task({x}) = {r:,}")
+
+# Decision helper — quick rule for code reviews
+def choose_parallel_strategy(task_type):
+    strategies = {
+        "io":  "ThreadPoolExecutor — good for reading/writing files or API calls.",
+        "cpu": "ProcessPoolExecutor — good for CPU-heavy pure Python (bypasses GIL).",
+        "gpu": "Batching + model.eval() + torch.no_grad(). Avoid multiprocessing.",
+    }
+    return strategies.get(task_type, "Start simple. Profile before optimising.")
+
+for t in ("io", "cpu", "gpu"):
+    print(f"{t:4s} → {choose_parallel_strategy(t)}")
+```""",
+    },
+    # ── 9. AnnData concat with sample labels ─────────────────────────────
+    {
+        "id": "eff_anndata_concat",
+        "title": "AnnData Concat with Sample Labels",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Concatenate multiple AnnData objects and keep sample provenance.
+
+Given a dict `adatas` mapping `sample_id → AnnData`:
+
+1. For each sample, set `adata.obs["sample"] = sample_id`
+2. Call `ad.concat()` with:
+   - `axis=0`, `join="outer"`, `label="sample"`
+   - `keys=list(adatas.keys())`, `index_unique="-"`
+3. Write the merged result to `merged.h5ad`
+4. Print the merged shape and confirm `obs["sample"]` has all sample IDs
+""",
+        "workspace_tip": (
+            "`join='outer'` fills missing genes with NaN (safest for heterogeneous samples). "
+            "`index_unique='-'` appends the sample key to cell barcodes to avoid duplicates. "
+            "Always set `obs['sample']` before concat so you can trace each cell back."
+        ),
+        "hint": """\
+```python
+import anndata as ad
+
+# adatas = {"s1": adata1, "s2": adata2, ...}
+for sample_id, adata in adatas.items():
+    adata.obs["sample"] = sample_id
+
+merged = ad.concat(
+    adatas,
+    axis=0,
+    join="outer",
+    label="sample",
+    keys=list(adatas.keys()),
+    index_unique="-",
+)
+merged.write_h5ad("merged.h5ad")
+```""",
+        "solution": """\
+```python
+import anndata as ad
+import numpy as np
+import tempfile
+from pathlib import Path
+
+# Build toy AnnData objects (50 cells each, slightly different genes)
+def make_adata(n_cells, n_genes, seed):
+    rng = np.random.default_rng(seed)
+    X = rng.integers(0, 100, size=(n_cells, n_genes)).astype(np.float32)
+    obs = ad.AnnData(X=X)
+    obs.var_names = [f"gene_{i}" for i in range(n_genes)]
+    obs.obs_names = [f"cell_{seed}_{i}" for i in range(n_cells)]
+    return obs
+
+adatas = {
+    "sample_A": make_adata(50, 200, seed=1),
+    "sample_B": make_adata(60, 195, seed=2),  # slightly fewer genes → outer join fills NA
+    "sample_C": make_adata(40, 200, seed=3),
+}
+
+# Add sample label before concat
+for sample_id, adata in adatas.items():
+    adata.obs["sample"] = sample_id
+
+# Concatenate — outer join keeps all genes, index_unique avoids barcode collisions
+merged = ad.concat(
+    adatas,
+    axis=0,
+    join="outer",
+    label="sample",
+    keys=list(adatas.keys()),
+    index_unique="-",
+)
+
+print(f"Merged shape : {merged.shape}")          # (150, 200)
+print(f"Samples      : {merged.obs['sample'].unique().tolist()}")
+
+with tempfile.TemporaryDirectory() as tmp:
+    out = Path(tmp) / "merged.h5ad"
+    merged.write_h5ad(out)
+    print(f"Written to   : {out.name}")
+
+assert set(merged.obs["sample"]) == {"sample_A", "sample_B", "sample_C"}
+assert merged.n_obs == 150
+print("AnnData concat verified ✓")
+```""",
+    },
+    # ── 10. Memory-aware h5ad normalize pipeline ──────────────────────────
+    {
+        "id": "eff_h5ad_normalize",
+        "title": "Memory-Aware h5ad Normalize Pipeline",
+        "category": "Efficiency",
+        "bucket": "Python Efficiency",
+        "prompt": """\
+**Task:** Write `normalize_one_h5ad(input_path, output_dir)` that is memory-aware.
+
+The function should:
+1. Read the `.h5ad` file
+2. Tag `adata.obs["sample"]` with the file stem
+3. Save raw counts in `adata.layers["counts"]` (if not already there)
+4. Run `sc.pp.normalize_total(target_sum=1e4)` then `sc.pp.log1p()`
+5. Write the result to `output_dir/<stem>.normalized.h5ad`
+6. **`del adata`** before returning — don't hold the large object
+7. Return `(sample_id, output_path)`
+
+Then write a thin wrapper `normalize_many_threaded(paths, output_dir, max_workers=2)`
+using `ThreadPoolExecutor` + `as_completed` with per-file error handling.
+""",
+        "workspace_tip": (
+            "`del adata` after `.write_h5ad()` lets Python free the RAM immediately — "
+            "critical when looping over many large files. "
+            "Use `ThreadPoolExecutor` (not `ProcessPoolExecutor`) because scanpy I/O is I/O-bound."
+        ),
+        "hint": """\
+```python
+import scanpy as sc
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def normalize_one_h5ad(input_path, output_dir, target_sum=1e4):
+    input_path = Path(input_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sample_id   = input_path.stem
+    output_path = output_dir / f"{sample_id}.normalized.h5ad"
+
+    adata = sc.read_h5ad(input_path)
+    adata.obs["sample"] = sample_id
+    if "counts" not in adata.layers:
+        adata.layers["counts"] = adata.X.copy()
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+    sc.pp.log1p(adata)
+    adata.write_h5ad(output_path)
+    del adata          # free RAM before returning
+    return sample_id, output_path
+```""",
+        "solution": """\
+```python
+import scanpy as sc
+import anndata as ad
+import numpy as np
+import tempfile
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def normalize_one_h5ad(input_path, output_dir, target_sum=1e4):
+    \"\"\"Load, normalize, write, del — memory-aware pipeline.\"\"\"
+    input_path  = Path(input_path)
+    output_dir  = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    sample_id   = input_path.stem
+    output_path = output_dir / f"{sample_id}.normalized.h5ad"
+
+    adata = sc.read_h5ad(input_path)
+    adata.obs["sample"] = sample_id
+
+    if "counts" not in adata.layers:
+        adata.layers["counts"] = adata.X.copy()
+
+    sc.pp.normalize_total(adata, target_sum=target_sum)
+    sc.pp.log1p(adata)
+    adata.write_h5ad(output_path)
+    del adata   # ← free RAM immediately; don't return the large object
+
+    return sample_id, output_path
+
+
+def normalize_many_threaded(input_paths, output_dir, max_workers=2):
+    \"\"\"Normalize many h5ad files with ThreadPoolExecutor + per-file error handling.\"\"\"
+    results, errors = {}, {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(normalize_one_h5ad, p, output_dir): p
+            for p in input_paths
+        }
+        for future in as_completed(futures):
+            path = futures[future]
+            try:
+                sample_id, output_path = future.result()
+                results[sample_id] = output_path
+                print(f"OK  {sample_id} → {output_path.name}")
+            except Exception as e:
+                errors[str(path)] = str(e)
+                print(f"ERR {path}: {e}")
+
+    return results, errors
+
+
+# ── smoke test with a tiny synthetic h5ad ──
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+
+    # create 2 toy .h5ad files
+    input_paths = []
+    for i, name in enumerate(["sampleA", "sampleB"]):
+        rng = np.random.default_rng(i)
+        adata = ad.AnnData(
+            X=rng.integers(0, 50, (30, 100)).astype(np.float32)
+        )
+        p = tmp / f"{name}.h5ad"
+        adata.write_h5ad(p)
+        input_paths.append(p)
+
+    out_dir = tmp / "normalized"
+    results, errors = normalize_many_threaded(input_paths, out_dir, max_workers=2)
+
+    print(f"\\nSucceeded: {len(results)}, Failed: {len(errors)}")
+    assert len(results) == 2 and len(errors) == 0
+    for sid, opath in results.items():
+        norm = sc.read_h5ad(opath)
+        assert "counts" in norm.layers
+        assert norm.obs["sample"].unique()[0] == sid
+    print("Memory-aware normalize pipeline verified ✓")
+```""",
+    },
+]
+
+UNFAMILIAR_PYTHON_QUESTIONS = [
+    {
+        "id": "unf_thread_pool_basics",
+        "title": "Day 1 - Thread Basics for I/O",
+        "category": "Concurrency",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Compare sequential vs threaded execution for an I/O-like function.
+
+1. Define `download_simulated(file_id)` using `time.sleep(1)`
+2. Implement `run_sequential(n)`
+3. Implement `run_threaded(n)` with `threading.Thread`
+4. Use `.start()` and `.join()` correctly
+5. Print runtimes and explain why threading helps here
+""",
+        "hint": """\
+```python
+import threading
+import time
+
+def download_simulated(file_id: int) -> str:
+    time.sleep(1)
+    return f"file_{file_id}.txt downloaded"
+
+def run_threaded(n: int) -> None:
+    threads = []
+    results = [None] * n
+    def worker(i: int):
+        results[i] = download_simulated(i)
+    for i in range(n):
+        t = threading.Thread(target=worker, args=(i,))
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+```
+""",
+        "solution": """\
+```python
+import threading
+import time
+
+def download_simulated(file_id: int) -> str:
+    # Pretend this is network I/O.
+    time.sleep(1)
+    return f"file_{file_id}.txt downloaded"
+
+def run_sequential(n: int) -> None:
+    start = time.time()
+    for i in range(n):
+        download_simulated(i)
+    print(f"Sequential: {time.time() - start:.2f}s")
+
+def run_threaded(n: int) -> None:
+    start = time.time()
+    threads = []
+    results = [None] * n
+
+    def worker(idx: int) -> None:
+        results[idx] = download_simulated(idx)
+
+    for i in range(n):
+        t = threading.Thread(target=worker, args=(i,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    print(f"Threaded: {time.time() - start:.2f}s")
+
+run_sequential(5)
+run_threaded(5)
+```
+""",
+    },
+    {
+        "id": "unf_race_condition_lock",
+        "title": "Day 1 - Race Condition and Lock",
+        "category": "Concurrency",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Demonstrate a race condition, then fix it.
+
+1. Create a shared `counter`
+2. Write `increment_unsafe` and run with 4 threads
+3. Observe incorrect results
+4. Add a `threading.Lock()` in `increment_safe`
+5. Show the safe version is deterministic
+""",
+        "hint": """\
+```python
+import threading
+
+counter = 0
+lock = threading.Lock()
+
+def increment_safe(n: int) -> None:
+    global counter
+    for _ in range(n):
+        with lock:
+            counter += 1
+```
+""",
+        "solution": """\
+```python
+import threading
+
+counter = 0
+
+def increment_unsafe(n: int) -> None:
+    global counter
+    for _ in range(n):
+        counter += 1
+
+def run_unsafe() -> None:
+    global counter
+    counter = 0
+    threads = [threading.Thread(target=increment_unsafe, args=(100_000,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"Unsafe result: {counter} (expected 400000)")
+
+lock = threading.Lock()
+
+def increment_safe(n: int) -> None:
+    global counter
+    for _ in range(n):
+        with lock:
+            counter += 1
+
+def run_safe() -> None:
+    global counter
+    counter = 0
+    threads = [threading.Thread(target=increment_safe, args=(100_000,)) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"Safe result: {counter} (expected 400000)")
+
+run_unsafe()
+run_safe()
+```
+""",
+    },
+    {
+        "id": "unf_multiprocessing_cpu",
+        "title": "Day 1 - Multiprocessing for CPU Work",
+        "category": "Concurrency",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Compare sequential CPU work to process-based parallelism.
+
+1. Write a CPU-heavy function (`sum(i*i for i in range(n))` style)
+2. Run over 4 tasks sequentially
+3. Run with `multiprocessing.Pool(processes=4)` and `pool.map`
+4. Compare timings
+""",
+        "hint": """\
+```python
+import multiprocessing
+
+def cpu_bound_task(n: int) -> int:
+    total = 0
+    for i in range(n):
+        total += i * i
+    return total
+
+with multiprocessing.Pool(processes=4) as pool:
+    results = pool.map(cpu_bound_task, [10_000_000] * 4)
+```
+""",
+        "solution": """\
+```python
+import multiprocessing
+import time
+
+def cpu_bound_task(n: int) -> int:
+    total = 0
+    for i in range(n):
+        total += i * i
+    return total
+
+def run_sequential_cpu(tasks: list[int]) -> None:
+    start = time.time()
+    _ = [cpu_bound_task(t) for t in tasks]
+    print(f"Sequential CPU: {time.time() - start:.2f}s")
+
+def run_multiprocessed(tasks: list[int]) -> None:
+    start = time.time()
+    with multiprocessing.Pool(processes=4) as pool:
+        _ = pool.map(cpu_bound_task, tasks)
+    print(f"Multiprocessed: {time.time() - start:.2f}s")
+
+tasks = [10_000_000] * 4
+run_sequential_cpu(tasks)
+run_multiprocessed(tasks)
+```
+""",
+    },
+    {
+        "id": "unf_asyncio_gather",
+        "title": "Day 1 - Asyncio gather Pattern",
+        "category": "Concurrency",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Run concurrent I/O-style coroutines using `asyncio.gather`.
+
+1. Define `fetch_simulated(i)` with `await asyncio.sleep(1)`
+2. Start 5 fetches concurrently using `asyncio.gather`
+3. Print total runtime and results
+4. Explain why `await asyncio.sleep` differs from `time.sleep`
+""",
+        "hint": """\
+```python
+import asyncio
+
+async def fetch_simulated(item_id: int) -> str:
+    await asyncio.sleep(1)
+    return f"item_{item_id} fetched"
+
+results = await asyncio.gather(*[fetch_simulated(i) for i in range(5)])
+```
+""",
+        "solution": """\
+```python
+import asyncio
+import time
+
+async def fetch_simulated(item_id: int) -> str:
+    await asyncio.sleep(1)
+    return f"item_{item_id} fetched"
+
+async def main() -> None:
+    start = time.time()
+    results = await asyncio.gather(*[fetch_simulated(i) for i in range(5)])
+    print(results)
+    print(f"Asyncio runtime: {time.time() - start:.2f}s")
+
+asyncio.run(main())
+```
+""",
+    },
+    {
+        "id": "unf_dunder_methods",
+        "title": "Day 2 - Classes and Dunder Methods",
+        "category": "Python Idioms",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Implement a `Sample` class with practical dunder methods.
+
+Required methods:
+1. `__repr__` for debugger-friendly display
+2. `__eq__` to compare by value
+3. `__lt__` so `sorted(samples)` works
+4. `__len__` so `len(sample)` returns `cell_count`
+""",
+        "hint": """\
+```python
+class Sample:
+    def __init__(self, sample_id: str, cell_count: int):
+        self.sample_id = sample_id
+        self.cell_count = cell_count
+
+    def __eq__(self, other) -> bool:
+        ...
+```
+""",
+        "solution": """\
+```python
+class Sample:
+    def __init__(self, sample_id: str, cell_count: int):
+        self.sample_id = sample_id
+        self.cell_count = cell_count
+
+    def __repr__(self) -> str:
+        return f"Sample(sample_id={self.sample_id!r}, cell_count={self.cell_count})"
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, Sample):
+            return NotImplemented
+        return (self.sample_id, self.cell_count) == (other.sample_id, other.cell_count)
+
+    def __lt__(self, other) -> bool:
+        return self.cell_count < other.cell_count
+
+    def __len__(self) -> int:
+        return self.cell_count
+
+samples = [Sample("S1", 500), Sample("S2", 1200), Sample("S3", 80)]
+print(sorted(samples))
+print(len(samples[0]))
+print(samples[0] == Sample("S1", 500))
+```
+""",
+    },
+    {
+        "id": "unf_decorators",
+        "title": "Day 2 - Decorators (timed, retry, cache)",
+        "category": "Python Idioms",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Write three decorators you will reuse in real projects.
+
+1. `timed` prints function runtime
+2. `retry(max_attempts, delay)` retries exceptions
+3. `cache` memoizes by args
+4. Use `functools.wraps` in each wrapper
+""",
+        "hint": """\
+```python
+import functools
+
+def timed(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        ...
+    return wrapper
+```
+""",
+        "solution": """\
+```python
+import functools
+import random
+import time
+
+def timed(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        print(f"{func.__name__} took {time.time() - start:.3f}s")
+        return result
+    return wrapper
+
+def retry(max_attempts: int = 3, delay: float = 0.2):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exc = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as exc:
+                    last_exc = exc
+                    print(f"attempt {attempt} failed: {exc}")
+                    time.sleep(delay)
+            raise last_exc
+        return wrapper
+    return decorator
+
+def cache(func):
+    store = {}
+    @functools.wraps(func)
+    def wrapper(*args):
+        if args not in store:
+            store[args] = func(*args)
+        return store[args]
+    return wrapper
+
+@timed
+def slow_function():
+    time.sleep(0.3)
+    return "done"
+
+@retry(max_attempts=3, delay=0.1)
+def unreliable():
+    if random.random() < 0.7:
+        raise ConnectionError("simulated")
+    return "success"
+
+@cache
+def fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+print(slow_function())
+try:
+    print(unreliable())
+except Exception as exc:
+    print(f"all retries failed: {exc}")
+print(fib(35))
+```
+""",
+    },
+    {
+        "id": "unf_generators",
+        "title": "Day 2 - Generators and yield",
+        "category": "Python Idioms",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Build and use practical generators.
+
+1. `read_large_file_lazily(lines)` that yields transformed lines
+2. `batch_generator(iterable, batch_size)`
+3. `infinite_counter(start)`
+4. Demonstrate `next()` and lazy behavior
+""",
+        "hint": """\
+```python
+def batch_generator(iterable, batch_size: int):
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+```
+""",
+        "solution": """\
+```python
+def read_large_file_lazily(lines: list[str]):
+    for line in lines:
+        yield line.strip().upper()
+
+def batch_generator(iterable, batch_size: int):
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) == batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+def infinite_counter(start: int = 0):
+    n = start
+    while True:
+        yield n
+        n += 1
+
+for line in read_large_file_lazily(["hello", "world"]):
+    print(line)
+
+for b in batch_generator(range(10), 3):
+    print(b)
+
+counter = infinite_counter()
+print(next(counter), next(counter), next(counter))
+```
+""",
+    },
+    {
+        "id": "unf_context_managers",
+        "title": "Day 2 - Context Managers",
+        "category": "Python Idioms",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Implement both styles of context managers.
+
+1. Class-based `Timer` with `__enter__` and `__exit__`
+2. Generator-based timer using `@contextmanager`
+3. Show both with `with` blocks
+4. Explain why cleanup runs even on exceptions
+""",
+        "hint": """\
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def timer_context():
+    start = time.time()
+    yield
+    print(time.time() - start)
+```
+""",
+        "solution": """\
+```python
+from contextlib import contextmanager
+import time
+
+class Timer:
+    def __enter__(self):
+        self.start = time.time()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        print(f"Elapsed: {time.time() - self.start:.3f}s")
+        return False
+
+@contextmanager
+def timer_context():
+    start = time.time()
+    yield
+    print(f"Elapsed: {time.time() - start:.3f}s")
+
+with Timer():
+    time.sleep(0.2)
+
+with timer_context():
+    time.sleep(0.2)
+```
+""",
+    },
+    {
+        "id": "unf_type_hints",
+        "title": "Day 2 - Practical Type Hints",
+        "category": "Python Idioms",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Add practical type hints for pipeline-style functions.
+
+1. Write `annotate_cells` with typed args and return values
+2. Use `Optional[str]` and `Union[str, int]`
+3. Return `list[tuple[str, bool]]`
+4. Add one parsing helper and test both quickly
+""",
+        "hint": """\
+```python
+from typing import Optional, Union
+
+def parse_id(raw: Union[str, int]) -> str:
+    return str(raw)
+```
+""",
+        "solution": """\
+```python
+from typing import Optional, Union
+
+def annotate_cells(
+    cell_ids: list[str],
+    scores: dict[str, float],
+    threshold: float = 0.5,
+    label: Optional[str] = None,
+) -> list[tuple[str, bool]]:
+    results: list[tuple[str, bool]] = []
+    for cid in cell_ids:
+        passed = scores.get(cid, 0.0) >= threshold
+        results.append((cid, passed))
+    return results
+
+def parse_id(raw: Union[str, int]) -> str:
+    return str(raw)
+
+print(annotate_cells(["c1", "c2"], {"c1": 0.7, "c2": 0.2}))
+print(parse_id(123))
+```
+""",
+    },
+    {
+        "id": "unf_pytest_basics",
+        "title": "Day 3 - Pytest Basics and Parametrize",
+        "category": "Testing",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Write tests using `pytest.raises` and `pytest.mark.parametrize`.
+
+1. Implement `normalize_score` and `classify`
+2. Test normal behavior
+3. Test error case when max score is zero
+4. Parametrize threshold edge cases
+""",
+        "hint": """\
+```python
+import pytest
+
+@pytest.mark.parametrize("score,threshold,expected", [
+    (0.6, 0.5, "pass"),
+    (0.4, 0.5, "fail"),
+])
+def test_classify(score, threshold, expected):
+    assert classify(score, threshold) == expected
+```
+""",
+        "solution": """\
+```python
+import pytest
+
+def normalize_score(raw_score: float, max_score: float) -> float:
+    if max_score == 0:
+        raise ValueError("max_score cannot be zero")
+    return raw_score / max_score
+
+def classify(score: float, threshold: float = 0.5) -> str:
+    return "pass" if score >= threshold else "fail"
+
+def test_normalize_score_basic():
+    assert normalize_score(5, 10) == 0.5
+
+def test_normalize_score_raises_on_zero():
+    with pytest.raises(ValueError):
+        normalize_score(5, 0)
+
+@pytest.mark.parametrize("score,threshold,expected", [
+    (0.6, 0.5, "pass"),
+    (0.4, 0.5, "fail"),
+    (0.5, 0.5, "pass"),
+])
+def test_classify(score, threshold, expected):
+    assert classify(score, threshold) == expected
+```
+""",
+    },
+    {
+        "id": "unf_pytest_fixture_mock",
+        "title": "Day 3 - Fixtures and Mocking",
+        "category": "Testing",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Practice fixtures and mock-based dependency isolation.
+
+1. Add a pytest fixture returning sample scores
+2. Write `fetch_and_classify(api_client, sample_id)`
+3. Use `MagicMock` to mock `api_client.get_score`
+4. Assert return value and `assert_called_once_with`
+""",
+        "hint": """\
+```python
+from unittest.mock import MagicMock
+
+mock_client = MagicMock()
+mock_client.get_score.return_value = 0.9
+```
+""",
+        "solution": """\
+```python
+import pytest
+from unittest.mock import MagicMock
+
+def classify(score: float, threshold: float = 0.5) -> str:
+    return "pass" if score >= threshold else "fail"
+
+@pytest.fixture
+def sample_scores():
+    return {"cell_1": 0.8, "cell_2": 0.3, "cell_3": 0.55}
+
+def test_classify_with_fixture(sample_scores):
+    results = {cid: classify(score) for cid, score in sample_scores.items()}
+    assert results["cell_1"] == "pass"
+    assert results["cell_2"] == "fail"
+
+def fetch_and_classify(api_client, sample_id: str) -> str:
+    score = api_client.get_score(sample_id)
+    return classify(score)
+
+def test_fetch_and_classify_mocked():
+    mock_client = MagicMock()
+    mock_client.get_score.return_value = 0.9
+    result = fetch_and_classify(mock_client, "sample_1")
+    assert result == "pass"
+    mock_client.get_score.assert_called_once_with("sample_1")
+```
+""",
+    },
+    {
+        "id": "unf_code_reading_drill",
+        "title": "Day 4 - Timed Code Reading Drill",
+        "category": "Code Reading",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Do a 5-minute code-reading drill with a function you did not write.
+
+Write a helper `summarize_function(fn)` that prints:
+1. Input parameters
+2. Return annotation
+3. Number of lines of source
+
+Then set a timer and manually answer:
+- what it takes in
+- what it does step by step
+- what it returns
+- what could break it
+""",
+        "hint": """\
+```python
+import inspect
+
+def summarize_function(fn):
+    sig = inspect.signature(fn)
+    src = inspect.getsource(fn)
+    print(sig)
+    print(len(src.splitlines()))
+```
+""",
+        "solution": """\
+```python
+import inspect
+import time
+
+def summarize_function(fn):
+    sig = inspect.signature(fn)
+    src = inspect.getsource(fn)
+    print(f"Function: {fn.__name__}")
+    print(f"Signature: {sig}")
+    print(f"Return annotation: {sig.return_annotation}")
+    print(f"Source lines: {len(src.splitlines())}")
+
+def example_fn(x: int, y: int = 3) -> int:
+    total = 0
+    for i in range(y):
+        total += x + i
+    return total
+
+summarize_function(example_fn)
+print("Start 5-minute drill now")
+start = time.time()
+print(f"Timer started at {start:.0f}")
+```
+""",
+    },
+    {
+        "id": "unf_big_o_warmup",
+        "title": "Day 4 - Big-O Warmup",
+        "category": "Code Reading",
+        "bucket": "Unfamiliar Python",
+        "prompt": """\
+**Task:** Build a quick Big-O warmup reference and mini checks.
+
+1. Create a dict mapping common operations to complexity strings
+2. Add lookups for list index, list search, dict lookup, sorting, nested loop, binary search
+3. Print the table in a stable order
+4. Implement a tiny binary search and verify correctness
+""",
+        "hint": """\
+```python
+complexity = {
+    "list_index": "O(1)",
+    "list_search": "O(n)",
+    "dict_lookup": "O(1) avg",
+}
+```
+""",
+        "solution": """\
+```python
+def binary_search(arr: list[int], target: int) -> int:
+    lo, hi = 0, len(arr) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if arr[mid] == target:
+            return mid
+        if arr[mid] < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return -1
+
+complexity = {
+    "List index access": "O(1)",
+    "List search (in)": "O(n)",
+    "Dict/set lookup": "O(1) average",
+    "Sorting": "O(n log n)",
+    "Nested loop same list": "O(n^2)",
+    "Binary search sorted data": "O(log n)",
+}
+
+for name in sorted(complexity):
+    print(f"{name:28s} -> {complexity[name]}")
+
+arr = [1, 3, 5, 7, 9, 11]
+assert binary_search(arr, 7) == 3
+assert binary_search(arr, 2) == -1
+print("Binary search checks passed")
+```
+""",
+    },
+]
+
+ALL_QUESTIONS = QUESTIONS + HELIX_QUESTIONS + CLINICAL_QUESTIONS + INTEGRATED_QUESTIONS + PYTORCH_QUESTIONS + LANGCHAIN_QUESTIONS + SC_SPATIAL_QUESTIONS + EFFICIENCY_QUESTIONS + UNFAMILIAR_PYTHON_QUESTIONS
 
 CATEGORY_ICON = {
     "ML/Statistics":    "🔵",
@@ -4556,6 +6487,15 @@ CATEGORY_ICON = {
     "Integrated Drill": "🧩",
     "PyTorch":          "🔥",
     "LangChain":        "🦜",
+    "Efficiency":       "⚡",
+    "Threading":        "🧵",
+    "Scanpy":           "🔬",
+    "scVelo":           "🌊",
+    "Squidpy":          "🗺️",
+    "Concurrency":      "🧵",
+    "Python Idioms":    "🧠",
+    "Testing":          "🧪",
+    "Code Reading":     "📚",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -4573,15 +6513,20 @@ _defaults = {
     "hide_left_panel": False,
     "hide_right_panel": False,
     "editor_height": 500,
+    "editor_alignment_slack_lines": 0,
+    "editor_top_slack_lines": 0,
     "right_panel_width": 4.4,
     "left_panel_width": 1.8,
+    "show_solution_side_by_side": False,
+    "solution_panel_width": 5.0,
     "timer_start":   time.time(),
     "user_code":     {},   # q_id → str  (persists per question)
     "editor_mode":   {},   # q_id → "mine" | "solution"
     "notes":         {},   # q_id → str  (personal notes per question)
     "custom_solutions": {},  # q_id → str  (user-promoted tested solution)
-    "last_run_ok":   {},   # q_id → bool (last execution status)
-    "last_run_code": {},   # q_id → str  (code that was last executed)
+    "last_run_ok":     {},   # q_id → bool (last execution status)
+    "last_run_code":   {},   # q_id → str  (code that was last executed)
+    "last_run_source": {},   # q_id → "mine" | "solution"
     "openai_api_key": "",
     "run_output":    "",
     "run_error":     "",
@@ -4608,8 +6553,12 @@ _PERSIST_KEYS = [
     "hide_left_panel",
     "hide_right_panel",
     "editor_height",
+    "editor_alignment_slack_lines",
+    "editor_top_slack_lines",
     "right_panel_width",
     "left_panel_width",
+    "show_solution_side_by_side",
+    "solution_panel_width",
 ]
 
 
@@ -4642,7 +6591,7 @@ if not st.session_state.get("_progress_loaded", False):
             st.session_state[_k] = _v
 
     # Validate restored navigation state against current question bank.
-    _valid_buckets = {"Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch"}
+    _valid_buckets = {"Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch", "LangChain", "SC/Spatial", "Python Efficiency", "Unfamiliar Python"}
     if st.session_state.active_bucket not in _valid_buckets:
         st.session_state.active_bucket = "Basic"
 
@@ -4738,6 +6687,19 @@ def _coerce_code_text(value, fallback: str = "") -> str:
     if isinstance(fallback, str):
         return fallback
     return ""
+
+
+def _strip_leading_slack_lines(code: str, slack_lines: int) -> str:
+    """Remove up to `slack_lines` leading blank lines used only for visual alignment."""
+    if not isinstance(code, str) or slack_lines <= 0:
+        return code if isinstance(code, str) else ""
+
+    lines = code.splitlines()
+    removed = 0
+    while removed < slack_lines and lines and lines[0].strip() == "":
+        lines.pop(0)
+        removed += 1
+    return "\n".join(lines)
 
 
 def _repair_split_print_strings(code: str) -> str:
@@ -4855,8 +6817,8 @@ def _active_llm_model() -> str:
     return st.secrets.get("LLM_MODEL", os.environ.get("LLM_MODEL", "claude-haiku-4-5"))
 
 
-def _explain_error_with_llm(code: str, error: str) -> str:
-    """Send code + traceback to Claude and return an explanation."""
+def _explain_error_with_llm(code: str, error: str, mode: str = "error") -> str:
+    """Send code + traceback/question to Claude and return an explanation."""
     try:
         import anthropic
         import os
@@ -4872,16 +6834,27 @@ def _explain_error_with_llm(code: str, error: str) -> str:
             )
 
         client = anthropic.Anthropic(api_key=api_key)
-        prompt = (
-            "You are a Python tutor. A student ran the following code and got an error.\n"
-            "Explain in 3–5 bullet points:\n"
-            "1. What the error means\n"
-            "2. Which line caused it and why\n"
-            "3. How to fix it\n"
-            "Be concise and beginner-friendly. Do NOT rewrite the whole solution.\n\n"
-            f"--- CODE ---\n{code.strip()}\n\n"
-            f"--- TRACEBACK ---\n{error.strip()}"
-        )
+
+        if mode == "question":
+            prompt = (
+                "You are a Python and bioinformatics tutor. A student is asking a question.\n"
+                "Use the provided reference solution as context in your answer.\n"
+                "Respond in 3-6 concise bullet points, beginner-friendly, and cite specific code details when relevant.\n\n"
+                f"--- REFERENCE SOLUTION ---\n{code.strip()}\n\n"
+                f"--- STUDENT QUESTION ---\n{error.strip()}"
+            )
+        else:
+            prompt = (
+                "You are a Python tutor. A student ran the following code and got an error.\n"
+                "Explain in 3–5 bullet points:\n"
+                "1. What the error means\n"
+                "2. Which line caused it and why\n"
+                "3. How to fix it\n"
+                "Be concise and beginner-friendly. Do NOT rewrite the whole solution.\n\n"
+                f"--- CODE ---\n{code.strip()}\n\n"
+                f"--- TRACEBACK ---\n{error.strip()}"
+            )
+
         resp = client.messages.create(
             model=model,
             max_tokens=512,
@@ -4942,7 +6915,7 @@ st.divider()
 # Bucket selector
 _bucket_choice = st.radio(
     "Bucket",
-    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch", "LangChain"],
+    options=["Basic", "Bioinformatics Engineer", "Clinical", "Integrated", "PyTorch", "LangChain", "SC/Spatial", "Python Efficiency", "Unfamiliar Python"],
     format_func=lambda b: {
         "Basic":    "⚡ Basic (ML / Python)",
         "Bioinformatics Engineer": "🧬 Bioinformatics Engineer",
@@ -4950,10 +6923,13 @@ _bucket_choice = st.radio(
         "Integrated": "🧩 Integrated Drills",
         "PyTorch": "🔥 PyTorch",
         "LangChain": "🦜 LangChain / LangGraph",
+        "SC/Spatial": "🔬 SC / Spatial",
+        "Python Efficiency": "🧵 Python Efficiency",
+        "Unfamiliar Python": "🧠 Unfamiliar Python",
     }[b],
     horizontal=True,
     index=["Basic", "Bioinformatics Engineer", "Clinical",
-           "Integrated", "PyTorch", "LangChain"].index(st.session_state.active_bucket),
+           "Integrated", "PyTorch", "LangChain", "SC/Spatial", "Python Efficiency", "Unfamiliar Python"].index(st.session_state.active_bucket),
     label_visibility="collapsed",
 )
 if _bucket_choice != st.session_state.active_bucket:
@@ -4968,7 +6944,7 @@ if _bucket_choice != st.session_state.active_bucket:
     st.session_state.timer_start   = time.time()
     st.rerun()
 
-_ui1, _ui2, _ui3, _ui4, _ui5, _ui6 = st.columns([1.25, 1.25, 2.0, 2.0, 2.0, 1.5])
+_ui1, _ui2, _ui3, _ui4, _ui5, _ui6, _ui7, _ui8, _ui9 = st.columns([1.05, 1.05, 1.35, 1.55, 1.55, 1.55, 1.2, 1.45, 1.45])
 with _ui1:
     st.session_state.hide_left_panel = st.toggle(
         "Hide left panel",
@@ -4976,12 +6952,29 @@ with _ui1:
         key="hide_left_panel_toggle",
     )
 with _ui2:
+    st.session_state.show_solution_side_by_side = st.toggle(
+        "Split solution",
+        value=st.session_state.show_solution_side_by_side,
+        key="show_solution_side_by_side_toggle",
+        help="Show solution in a panel to the left of your editor for copy-by-typing practice.",
+    )
+with _ui3:
     st.session_state.hide_right_panel = st.toggle(
         "Hide right panel",
         value=st.session_state.hide_right_panel,
         key="hide_right_panel_toggle",
     )
-with _ui3:
+with _ui4:
+    st.session_state.solution_panel_width = st.slider(
+        "Split width",
+        min_value=3.0,
+        max_value=7.0,
+        value=float(st.session_state.solution_panel_width),
+        step=0.2,
+        key="solution_panel_width_slider",
+        disabled=not st.session_state.show_solution_side_by_side,
+    )
+with _ui5:
     st.session_state.left_panel_width = st.slider(
         "Left panel width",
         min_value=1.0,
@@ -4990,7 +6983,7 @@ with _ui3:
         step=0.1,
         key="left_panel_width_slider",
     )
-with _ui4:
+with _ui6:
     st.session_state.editor_height = st.slider(
         "Editor height",
         min_value=380,
@@ -4999,7 +6992,7 @@ with _ui4:
         step=20,
         key="editor_height_slider",
     )
-with _ui5:
+with _ui7:
     st.session_state.right_panel_width = st.slider(
         "Right panel width",
         min_value=2.0,
@@ -5007,6 +7000,26 @@ with _ui5:
         value=float(st.session_state.right_panel_width),
         step=0.2,
         key="right_panel_width_slider",
+    )
+with _ui8:
+    st.session_state.editor_alignment_slack_lines = st.slider(
+        "Bottom slack",
+        min_value=0,
+        max_value=400,
+        value=int(st.session_state.editor_alignment_slack_lines),
+        step=10,
+        key="editor_alignment_slack_lines_slider",
+        help="Adds virtual blank lines below your editable code so you can scroll further to align against the reference panel.",
+    )
+with _ui9:
+    st.session_state.editor_top_slack_lines = st.slider(
+        "Top slack",
+        min_value=0,
+        max_value=200,
+        value=int(st.session_state.editor_top_slack_lines),
+        step=10,
+        key="editor_top_slack_lines_slider",
+        help="Adds temporary blank lines above your editable code so you can scroll past the first real line for alignment.",
     )
 with _ui6:
     st.caption("Customize layout.")
@@ -5102,6 +7115,10 @@ with center:
     # ── Code editor ──────────────────────────────────────────────────────────
     _default_code = f"# {q['title']}\n# Write your solution here\n\n"
     _mode = st.session_state.editor_mode.get(q["id"], "mine")
+    _show_side_solution = bool(st.session_state.show_solution_side_by_side)
+    if _show_side_solution and _mode != "mine":
+        st.session_state.editor_mode[q["id"]] = "mine"
+        _mode = "mine"
     _base_solution_code = _extract_solution_code(q["solution"])
     _custom_solution_code = st.session_state.custom_solutions.get(q["id"])
     _invalid_custom_solution = False
@@ -5117,16 +7134,20 @@ with center:
         if _mode == "solution"
         else st.session_state.user_code.get(q["id"], _default_code)
     )
+    _top_slack_lines = int(st.session_state.editor_top_slack_lines) if _mode == "mine" else 0
+    _editor_display_code = ("\n" * _top_slack_lines) + current_code if _top_slack_lines > 0 else current_code
     _editor_key = f"editor_{q['id']}_{_mode}"
-    _live_editor_code = _coerce_code_text(
-        st.session_state.get(_editor_key, current_code),
-        current_code,
+    _live_editor_raw = _coerce_code_text(
+        st.session_state.get(_editor_key, _editor_display_code),
+        _editor_display_code,
     )
+    _live_editor_code = _strip_leading_slack_lines(_live_editor_raw, _top_slack_lines)
 
     _mine_code = st.session_state.user_code.get(q["id"], _default_code)
     _can_promote_solution = (
         st.session_state.last_run_ok.get(q["id"], False)
-        and st.session_state.last_run_code.get(q["id"]) == _mine_code
+        and (st.session_state.last_run_code.get(q["id"]) or "").strip()
+            == (_mine_code or "").strip()
     )
 
     # Mode toggle + action buttons on one row
@@ -5145,15 +7166,31 @@ with center:
             "✅ Solution",
             type="primary" if _mode == "solution" else "secondary",
             use_container_width=True,
-            help="Load the full solution — your WIP is preserved",
+            help=(
+                "Disabled in split mode because solution is already shown on the left."
+                if _show_side_solution
+                else "Load the full solution — your WIP is preserved"
+            ),
+            disabled=_show_side_solution,
         ):
             st.session_state.editor_mode[q["id"]] = "solution"
             st.rerun()
+    _last_src = st.session_state.last_run_source.get(q["id"], "mine")
     with _tc3:
-        if st.button("▶ Run Code", type="primary", use_container_width=True):
+        if st.button(
+            "▶ Run Code",
+            type="primary" if _last_src != "solution" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state.last_run_source[q["id"]] = "mine"
             _run_code(q["id"], _live_editor_code)
     with _tc4:
-        if st.button("🧪 Run Solution", use_container_width=True):
+        if st.button(
+            "🧪 Run Solution",
+            type="primary" if _last_src == "solution" else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state.last_run_source[q["id"]] = "solution"
             _run_code(q["id"], _solution_code)
     with _tc5:
         if st.button("🗑️ Clear Editor", use_container_width=True):
@@ -5327,23 +7364,110 @@ with center:
     </script>
     """, height=0)
 
-    user_code = st_ace(
-        value=current_code,
-        language="python",
-        theme="monokai",
-        key=_editor_key,
-        height=int(st.session_state.editor_height),
-        tab_size=4,
-        font_size=14,
-        show_gutter=True,
-        show_print_margin=False,
-        wrap=False,
-        auto_update=True,
+    if _show_side_solution:
+        _split_left = float(st.session_state.solution_panel_width)
+        _split_right = max(10.0 - _split_left, 3.0)
+        _sol_col, _edit_col = st.columns([_split_left, _split_right])
+        with _sol_col:
+            st.markdown("**📘 Reference Solution**")
+            st_ace(
+                value=_solution_code,
+                language="python",
+                theme="monokai",
+                key=f"ref_solution_{q['id']}",
+                height=int(st.session_state.editor_height),
+                tab_size=4,
+                font_size=14,
+                show_gutter=True,
+                show_print_margin=False,
+                wrap=False,
+                readonly=True,
+                auto_update=False,
+            )
+        with _edit_col:
+            st.markdown("**✍️ My Code**")
+            user_code = st_ace(
+                value=_editor_display_code,
+                language="python",
+                theme="monokai",
+                key=_editor_key,
+                height=int(st.session_state.editor_height),
+                tab_size=4,
+                font_size=14,
+                show_gutter=True,
+                show_print_margin=False,
+                wrap=False,
+                auto_update=True,
+            )
+    else:
+        user_code = st_ace(
+            value=_editor_display_code,
+            language="python",
+            theme="monokai",
+            key=_editor_key,
+            height=int(st.session_state.editor_height),
+            tab_size=4,
+            font_size=14,
+            show_gutter=True,
+            show_print_margin=False,
+            wrap=False,
+            auto_update=True,
+        )
+
+    # Highlight only the editable My Code pane with a green outline.
+    components.html(
+        """
+        <script>
+        (function () {
+            function applyMyCodeOutline() {
+                try {
+                    var par;
+                    try { par = window.top; } catch (e) { par = window.parent; }
+                    var frames = par.document.querySelectorAll('iframe');
+                    for (var i = 0; i < frames.length; i++) {
+                        var f = frames[i];
+                        try {
+                            var win = f.contentWindow;
+                            var doc = f.contentDocument;
+                            if (!win || !doc || !win.ace) continue;
+                            var node = doc.querySelector('.ace_editor');
+                            if (!node) continue;
+                            var editor = win.ace.edit(node);
+                            if (!editor) continue;
+
+                            if (!editor.getReadOnly()) {
+                                f.style.outline = '2px solid rgba(46, 160, 67, 0.78)';
+                                f.style.outlineOffset = '2px';
+                                f.style.borderRadius = '8px';
+                                f.style.boxShadow = '0 0 0 2px rgba(46, 160, 67, 0.14)';
+                            } else {
+                                f.style.outline = '';
+                                f.style.outlineOffset = '';
+                                f.style.boxShadow = '';
+                            }
+                        } catch (ex) {}
+                    }
+                } catch (ex) {}
+            }
+
+            applyMyCodeOutline();
+            var root;
+            try { root = window.top; } catch (e) { root = window; }
+            if (root._myCodeOutlinePoll) clearInterval(root._myCodeOutlinePoll);
+            root._myCodeOutlinePoll = setInterval(applyMyCodeOutline, 1000);
+        })();
+        </script>
+        """,
+        height=0,
     )
+
     # Persist WIP only in "mine" mode; solution view stays pristine
     if user_code is not None:
         if _mode == "mine":
-            st.session_state.user_code[q["id"]] = user_code
+            st.session_state.user_code[q["id"]] = _strip_leading_slack_lines(
+                _coerce_code_text(user_code, current_code),
+                _top_slack_lines,
+            )
     else:
         user_code = current_code
 
@@ -5376,7 +7500,6 @@ with center:
             dots = "🔴" * min(cnt, 6)
             st.markdown(f"- **{name}** {dots} ×{cnt}")
 
-
 # ── RIGHT: reference panel ────────────────────────────────────────────────────
 if right is not None:
     with right:
@@ -5395,6 +7518,27 @@ if right is not None:
             st.session_state.show_hint     = False
             st.session_state.show_solution = False
             st.rerun()
+
+        # ── Ask Claude (general Q&A) ──────────────────────────────────────
+        with st.expander("💬 Ask Claude", expanded=False):
+            st.caption(f"Active model: `{_active_llm_model()}`")
+            _q = st.chat_input("Ask a Python or bioinformatics question:", key="claude_question_input")
+            if _q and _q.strip():
+                st.session_state.claude_question = _q
+                with st.spinner("Asking Claude..."):
+                    _solution_context = (
+                        _solution_code
+                        if "_solution_code" in locals() and str(_solution_code).strip()
+                        else _extract_solution_code(q["solution"])
+                    )
+                    st.session_state.claude_response = _explain_error_with_llm(
+                        code=_solution_context,
+                        error=_q,
+                        mode="question",
+                    )
+            if st.session_state.claude_response:
+                st.markdown("**Claude's response:**")
+                st.markdown(st.session_state.claude_response)
 
         # ── Output ───────────────────────────────────────────────────────────
         if st.session_state.run_error:
@@ -5423,22 +7567,6 @@ if right is not None:
                     st.pyplot(fig)
         else:
             st.caption("▶ Run your code — output appears here.")
-        
-        # ── Ask Claude (general Q&A) ──────────────────────────────────────
-        with st.expander("💬 Ask Claude", expanded=False):
-            st.caption("Enter sends your question.")
-            st.caption(f"Active model: `{_active_llm_model()}`")
-            _q = st.chat_input("Ask a Python or bioinformatics question:", key="claude_question_input")
-            if _q and _q.strip():
-                st.session_state.claude_question = _q
-                with st.spinner("Asking Claude..."):
-                    st.session_state.claude_response = _explain_error_with_llm(
-                        code="(general question, no code)",
-                        error=_q
-                    )
-            if st.session_state.claude_response:
-                st.markdown("**Claude's response:**")
-                st.markdown(st.session_state.claude_response)
 
 # Persist progress at the end of each rerun.
 _save_progress_to_disk()

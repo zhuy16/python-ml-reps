@@ -1,7 +1,9 @@
 """Basic data science workflow tests."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import sys
+import time
 
 import pandas as pd
 from lifelines import KaplanMeierFitter
@@ -226,3 +228,121 @@ def test_sample_vcf_groupby_and_merge_pipeline() -> None:
     assert sample_summary["n_variants"].sum() == len(df_clean)
     assert merged["cohort"].notna().all()
     assert not cohort_summary.empty
+
+
+# ---------------------------------------------------------------------------
+# Efficiency patterns
+# ---------------------------------------------------------------------------
+
+
+def test_dict_lookup_faster_than_nested_loop() -> None:
+    """O(1) dict membership check outperforms O(n²) nested-loop for gene matching."""
+    genes_a = [f"GENE_{i}" for i in range(500)]
+    genes_b = [f"GENE_{i}" for i in range(250, 750)]
+
+    # O(n²) nested loop
+    t0 = time.perf_counter()
+    nested_matches = [g for g in genes_a for g2 in genes_b if g == g2]
+    nested_time = time.perf_counter() - t0
+
+    # O(n) dict / set lookup
+    t0 = time.perf_counter()
+    lookup = set(genes_b)
+    dict_matches = [g for g in genes_a if g in lookup]
+    dict_time = time.perf_counter() - t0
+
+    assert sorted(nested_matches) == sorted(dict_matches)
+    assert dict_time < nested_time
+
+
+def test_generator_lower_memory_than_list() -> None:
+    """Generator expression does not materialise all items; list does."""
+    import sys as _sys
+
+    n = 10_000
+
+    list_obj = [x * 2 for x in range(n)]
+    gen_obj = (x * 2 for x in range(n))
+
+    # A generator has a tiny, fixed footprint regardless of n
+    assert _sys.getsizeof(gen_obj) < _sys.getsizeof(list_obj)
+
+    # Both produce the same values
+    assert list(gen_obj) == list_obj
+
+
+def test_list_comprehension_filter() -> None:
+    """List-comprehension filter mirrors dict-based QC threshold filtering."""
+    qc_dict = {
+        f"cell_{i}": {"n_genes": 200 + i * 3, "pct_mt": 5 + (i % 30)}
+        for i in range(100)
+    }
+
+    high_quality = [
+        cell
+        for cell, qc in qc_dict.items()
+        if qc["n_genes"] > 200 and qc["pct_mt"] < 20
+    ]
+
+    assert isinstance(high_quality, list)
+    assert all(qc_dict[c]["n_genes"] > 200 for c in high_quality)
+    assert all(qc_dict[c]["pct_mt"] < 20 for c in high_quality)
+
+
+# ---------------------------------------------------------------------------
+# Threading patterns
+# ---------------------------------------------------------------------------
+
+
+def test_threadpoolexecutor_parallel_file_parse(tmp_path) -> None:
+    """ThreadPoolExecutor processes multiple VCF-style files concurrently."""
+    vcf_src = Path(__file__).resolve().parents[1] / "data" / "sample.vcf"
+    assert vcf_src.exists()
+
+    # Create a few copies to simulate multiple files
+    copies = []
+    for i in range(3):
+        dest = tmp_path / f"sample_{i}.vcf"
+        dest.write_bytes(vcf_src.read_bytes())
+        copies.append(dest)
+
+    def process_one(path: Path) -> tuple[Path, int]:
+        df = _parse_sample_vcf(path)
+        return path, len(df)
+
+    results: dict[Path, int] = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(process_one, p): p for p in copies}
+        for future in as_completed(futures):
+            path, count = future.result()
+            results[path] = count
+
+    assert len(results) == len(copies)
+    assert all(count > 0 for count in results.values())
+    # All copies of the same file must parse to the same row count
+    counts = list(results.values())
+    assert counts[0] == counts[1] == counts[2]
+
+
+def test_threadpoolexecutor_exception_handling(tmp_path) -> None:
+    """Exceptions from worker threads are re-raised via future.result()."""
+    bad_path = tmp_path / "nonexistent.vcf"
+    good_path = Path(__file__).resolve().parents[1] / "data" / "sample.vcf"
+
+    def process_one(path: Path) -> tuple[Path, int]:
+        df = _parse_sample_vcf(path)
+        return path, len(df)
+
+    errors = []
+    results: dict[Path, int] = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {executor.submit(process_one, p): p for p in [good_path, bad_path]}
+        for future in as_completed(futures):
+            try:
+                path, count = future.result()
+                results[path] = count
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+    assert len(errors) == 1
+    assert len(results) == 1

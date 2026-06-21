@@ -21,6 +21,10 @@ license = {text = "MIT"}
 dependencies = [
   "typer",
   "rich",
+  "scanpy>=1.12.1",
+  "scvelo>=0.3.4",
+  "squidpy>=1.8.1",
+  "leidenalg>=0.12.0",
 ]
 requires-python = ">= 3.12"
 
